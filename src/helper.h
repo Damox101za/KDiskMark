@@ -71,6 +71,6 @@ private:
     HelperAdaptor *m_helperAdaptor;
     QDBusServiceWatcher *m_serviceWatcher = nullptr;
 
-    QProcess *m_process;
+    QProcess *m_process = nullptr;
     QTemporaryFile m_benchmarkFile;
 };
