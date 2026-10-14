@@ -14,6 +14,67 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+namespace
+{
+    // Bounds of what the settings dialog can produce, with a little headroom. The helper runs
+    // fio as root, so it must not trust whatever a D-Bus client sends.
+    constexpr int MaxFileSizeMiB = 64 * 1024;
+    constexpr int MaxMeasuringTimeSec = 3600;
+    constexpr int MaxBlockSizeKiB = 8192;
+    constexpr int MaxQueueDepth = 512;
+    constexpr int MaxThreads = 64;
+
+    bool inRange(int value, int minimum, int maximum)
+    {
+        return value >= minimum && value <= maximum;
+    }
+
+    // Returns an empty string when the parameters are acceptable, otherwise the reason.
+    QString validateFileSize(int fileSize)
+    {
+        if (!inRange(fileSize, 1, MaxFileSizeMiB)) {
+            return QStringLiteral("The file size must be between 1 and %1 MiB.").arg(MaxFileSizeMiB);
+        }
+
+        return QString();
+    }
+
+    QString validateTestParameters(int measuringTime, int fileSize, int randomReadPercentage,
+                                   int blockSize, int queueDepth, int threads, const QString &rw)
+    {
+        static const QStringList allowedRw = {
+            QStringLiteral("read"), QStringLiteral("write"), QStringLiteral("rw"),
+            QStringLiteral("randread"), QStringLiteral("randwrite"), QStringLiteral("randrw")
+        };
+
+        if (!allowedRw.contains(rw)) {
+            return QStringLiteral("The I/O pattern is not supported.");
+        }
+
+        if (!inRange(measuringTime, 1, MaxMeasuringTimeSec)) {
+            return QStringLiteral("The measuring time must be between 1 and %1 seconds.").arg(MaxMeasuringTimeSec);
+        }
+
+        if (!inRange(randomReadPercentage, 0, 100)) {
+            return QStringLiteral("The read percentage must be between 0 and 100.");
+        }
+
+        if (!inRange(blockSize, 1, MaxBlockSizeKiB)) {
+            return QStringLiteral("The block size must be between 1 and %1 KiB.").arg(MaxBlockSizeKiB);
+        }
+
+        if (!inRange(queueDepth, 1, MaxQueueDepth)) {
+            return QStringLiteral("The queue depth must be between 1 and %1.").arg(MaxQueueDepth);
+        }
+
+        if (!inRange(threads, 1, MaxThreads)) {
+            return QStringLiteral("The number of threads must be between 1 and %1.").arg(MaxThreads);
+        }
+
+        return validateFileSize(fileSize);
+    }
+}
+
 HelperAdaptor::HelperAdaptor(Helper *parent) :
     QDBusAbstractAdaptor(parent)
 {
@@ -215,6 +276,11 @@ QVariantMap Helper::prepareBenchmarkFile(const QString &benchmarkPath, int fileS
         return {{"success", false}, {"error", "The path to the file is incorrect."}};
     }
 
+    // Checked before the file is created so a rejected request leaves nothing behind
+    if (const QString error = validateFileSize(fileSize); !error.isEmpty()) {
+        return {{"success", false}, {"error", error}};
+    }
+
     m_benchmarkFile.setFileTemplate(QStringLiteral("%1/%2").arg(benchmarkPath).arg("kdiskmark-XXXXXX.tmp"));
 
     if (!m_benchmarkFile.open()) {
@@ -241,6 +307,12 @@ QVariantMap Helper::startBenchmarkTest(int measuringTime, int fileSize, int rand
 
     if (m_benchmarkFile.fileName().isNull() || !QFile(m_benchmarkFile.fileName()).exists()) {
         return {{"success", false}, {"error", "The benchmark file was not pre-created."}};
+    }
+
+    if (const QString error = validateTestParameters(measuringTime, fileSize, randomReadPercentage,
+                                                     blockSize, queueDepth, threads, rw);
+        !error.isEmpty()) {
+        return {{"success", false}, {"error", error}};
     }
 
     const bool started = startFio(QStringList()
