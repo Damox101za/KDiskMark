@@ -291,7 +291,7 @@ void AppSettings::setTheme(Global::Theme theme)
 
 Global::Theme AppSettings::defaultTheme()
 {
-    return Global::Theme::UseFusion;
+    return Global::Theme::StyleSheetNeon;
 }
 
 Global::BenchmarkParams AppSettings::getBenchmarkParams(Global::BenchmarkTest test, Global::PerformanceProfile profile) const
