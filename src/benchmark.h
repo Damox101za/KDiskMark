@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "appsettings.h"
+#include "drivehealth.h"
 
 class QDBusPendingCall;
 class DevJonmagonKdiskmarkHelperInterface;
@@ -93,6 +94,7 @@ private:
     Benchmark::ParsedJob parseResult(const QString &output, const QString &errorOutput);
     void sendResult(const Benchmark::PerformanceResult &result, const int index);
     void sendStats(const QVector<float> &samples);
+    void fetchDriveHealth();
 
     void initSession();
     void prepareDirectory(const QString &benchmarkFile);
@@ -105,6 +107,7 @@ signals:
     void resultReady(QObject *target, const Benchmark::PerformanceResult &result);
     // Bandwidth (MB/s) of the individual loops of a test: minimum, average, maximum and loops done.
     void statsReady(QObject *target, float minimum, float average, float maximum, int samples);
+    void driveHealthReady(const DriveHealth &health);
     void failed(const QString &error);
     void finished();
     void runningStateChanged(bool state);

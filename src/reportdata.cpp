@@ -24,7 +24,9 @@ namespace
         QStringLiteral("bandwidth_mb_s"), QStringLiteral("bandwidth_min_mb_s"),
         QStringLiteral("bandwidth_avg_mb_s"), QStringLiteral("bandwidth_max_mb_s"),
         QStringLiteral("iops"), QStringLiteral("latency_us"),
-        QStringLiteral("score"), QStringLiteral("rating"), QStringLiteral("performance_percent")
+        QStringLiteral("health_percent"), QStringLiteral("smart_passed"), QStringLiteral("temperature_c"),
+        QStringLiteral("score"), QStringLiteral("rating"), QStringLiteral("performance_percent"),
+        QStringLiteral("filesystem_health_percent")
     };
 
     QString csvField(const QString &value)
@@ -49,10 +51,16 @@ namespace
         return value.isDouble() ? QString::number(value.toDouble(), 'g', 12) : QString();
     }
 
+    QString boolField(const QJsonValue &value)
+    {
+        return value.isBool() ? (value.toBool() ? QStringLiteral("passed") : QStringLiteral("failed")) : QString();
+    }
+
     QString csvRows(const QJsonObject &report)
     {
         QString out;
 
+        const QJsonObject health = report.value(QStringLiteral("health")).toObject();
         const QJsonObject summary = report.value(QStringLiteral("summary")).toObject();
         const QJsonObject drive = report.value(QStringLiteral("drive")).toObject();
 
@@ -83,9 +91,14 @@ namespace
                 numberField(r.value(QStringLiteral("bandwidth_max_mb_s"))),
                 numberField(r.value(QStringLiteral("iops"))),
                 numberField(r.value(QStringLiteral("latency_us"))),
+                numberField(health.value(QStringLiteral("health_percent"))),
+                boolField(health.value(QStringLiteral("smart_passed"))),
+                numberField(health.value(QStringLiteral("temperature_c"))),
                 numberField(summary.value(QStringLiteral("score"))),
                 csvField(summary.value(QStringLiteral("rating")).toString()),
-                numberField(summary.value(QStringLiteral("performance_percent")))
+                numberField(summary.value(QStringLiteral("performance_percent"))),
+                numberField(report.value(QStringLiteral("filesystem_health")).toObject()
+                                  .value(QStringLiteral("health_percent")))
             };
 
             out += fields.join(QLatin1Char(',')) + QLatin1String("\r\n");
@@ -344,6 +357,45 @@ namespace ReportData
             if (summary.value(QStringLiteral("performance_percent")).isDouble())
                 out << QStringLiteral("  Performance: %1 % of a mainstream NVMe SSD (100 % = reference)")
                        .arg(summary.value(QStringLiteral("performance_percent")).toInt());
+        }
+
+        const QJsonObject health = report.value(QStringLiteral("health")).toObject();
+        if (!health.isEmpty()) {
+            out << QString() << QStringLiteral("[Drive Health]");
+
+            if (!health.value(QStringLiteral("available")).toBool()) {
+                out << QStringLiteral("  Not available: %1").arg(health.value(QStringLiteral("message")).toString());
+            }
+            else {
+                const QJsonValue percent = health.value(QStringLiteral("health_percent"));
+                const QJsonValue passed = health.value(QStringLiteral("smart_passed"));
+                const QJsonValue temperature = health.value(QStringLiteral("temperature_c"));
+                const QJsonValue hours = health.value(QStringLiteral("power_on_hours"));
+
+                out << QStringLiteral("  Health: %1")
+                       .arg(percent.isDouble() ? QStringLiteral("%1 %").arg(percent.toInt()) : QStringLiteral("not reported by the drive"))
+                    << QStringLiteral("  SMART assessment: %1")
+                       .arg(passed.isBool() ? (passed.toBool() ? QStringLiteral("PASSED") : QStringLiteral("FAILED")) : QStringLiteral("unknown"));
+
+                if (temperature.isDouble())
+                    out << QStringLiteral("  Temperature: %1 C").arg(temperature.toInt());
+                if (hours.isDouble())
+                    out << QStringLiteral("  Power-on time: %1 h").arg(static_cast<qint64>(hours.toDouble()));
+            }
+        }
+
+        const QJsonObject fsHealth = report.value(QStringLiteral("filesystem_health")).toObject();
+        if (!fsHealth.isEmpty()) {
+            out << QString() << QStringLiteral("[Filesystem Health]");
+            if (!fsHealth.value(QStringLiteral("available")).toBool()) {
+                out << QStringLiteral("  Not available: %1").arg(fsHealth.value(QStringLiteral("message")).toString());
+            }
+            else {
+                out << QStringLiteral("  %1: %2 % (%3 recorded errors)")
+                       .arg(fsHealth.value(QStringLiteral("filesystem")).toString())
+                       .arg(fsHealth.value(QStringLiteral("health_percent")).toInt())
+                       .arg(static_cast<qint64>(fsHealth.value(QStringLiteral("error_count")).toDouble()));
+            }
         }
 
         const QJsonObject drive = report.value(QStringLiteral("drive")).toObject();

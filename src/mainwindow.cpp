@@ -15,6 +15,10 @@
 #include <QDateTime>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QLabel>
+#include <QFrame>
+#include <QHBoxLayout>
+#include <QVBoxLayout>
 #include <QSysInfo>
 
 #include "math.h"
@@ -24,6 +28,7 @@
 #include "storageitemdelegate.h"
 #include "global.h"
 #include "reportdata.h"
+#include "healthgauge.h"
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -182,6 +187,8 @@ MainWindow::MainWindow(QWidget *parent)
     ui->actionTheme_Stylesheet_Dark->setChecked(settings.getTheme() ==Global::Theme::StyleSheetDark);
     ui->actionTheme_Do_not_apply->setChecked(settings.getTheme() == Global::Theme::DoNotApply);
 
+    setupInsightsPanel();
+
     updateProgressBarsStyle();
 
     updatePresetsSelection();
@@ -196,6 +203,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_benchmark, &Benchmark::benchmarkStatusUpdate, this, &MainWindow::benchmarkStatusUpdate);
     connect(m_benchmark, &Benchmark::resultReady, this, &MainWindow::handleResults);
     connect(m_benchmark, &Benchmark::statsReady, this, &MainWindow::handleStats);
+    connect(m_benchmark, &Benchmark::driveHealthReady, this, &MainWindow::handleDriveHealth);
     connect(m_benchmark, &Benchmark::failed, this, &MainWindow::benchmarkFailed);
     connect(m_benchmark, &Benchmark::cowCheckRequired, this, &MainWindow::handleCowCheck);
     connect(m_benchmark, &Benchmark::directoryChanged, this, &MainWindow::handleDirectoryChanged);
@@ -756,12 +764,17 @@ QJsonObject MainWindow::getBenchmarkReport()
                                        ? QStringLiteral("zeros") : QStringLiteral("random") },
         { QStringLiteral("system"), ReportData::systemInfo() },
         { QStringLiteral("drive"), QJsonObject {
-            { QStringLiteral("device"), QString::fromLatin1(volume.device()) },
-            { QStringLiteral("model"), ui->deviceModel->text() },
+            { QStringLiteral("device"), m_driveHealth.device.isEmpty() ? QString::fromLatin1(volume.device()) : m_driveHealth.device },
+            { QStringLiteral("model"), m_driveHealth.model.isEmpty() ? ui->deviceModel->text() : m_driveHealth.model },
+            { QStringLiteral("firmware"), m_driveHealth.firmware },
+            { QStringLiteral("protocol"), m_driveHealth.protocol },
             { QStringLiteral("filesystem"), QString::fromLatin1(volume.fileSystemType()) },
+            { QStringLiteral("capacity_bytes"), static_cast<double>(m_driveHealth.capacityBytes) },
             { QStringLiteral("target_total_bytes"), static_cast<double>(volume.bytesTotal()) },
             { QStringLiteral("target_free_bytes"), static_cast<double>(volume.bytesFree()) }
         } },
+        { QStringLiteral("health"), m_driveHealth.toJson() },
+        { QStringLiteral("filesystem_health"), currentFilesystemHealth().toJson() },
         { QStringLiteral("summary"), ReportData::summarize(results) },
         { QStringLiteral("results"), results }
     };
@@ -894,6 +907,10 @@ void MainWindow::on_comboBox_Storages_currentIndexChanged(int index)
             m_benchmark->setDir(volumeInfo.path);
             ui->deviceModel->setText(DiskDriveInfo::Instance().getModelName(QStorageInfo(volumeInfo.path).device()));
             ui->extraIcon->setVisible(DiskDriveInfo::Instance().isEncrypted(QStorageInfo(volumeInfo.path).device()));
+
+            // The drive health read for the previous target does not apply to this one
+            m_driveHealth = DriveHealth();
+            updateInsightsPanel();
         }
     }
 }
@@ -1145,6 +1162,7 @@ void MainWindow::handleResults(QObject *target, const Benchmark::PerformanceResu
     }
 
     updateProgressBar(progressBar);
+    updateInsightsPanel();
 }
 
 void MainWindow::handleStats(QObject *target, float minimum, float average, float maximum, int samples)
@@ -1157,6 +1175,138 @@ void MainWindow::handleStats(QObject *target, float minimum, float average, floa
     progressBar->setProperty("BandwidthMin", minimum);
     progressBar->setProperty("BandwidthAvg", average);
     progressBar->setProperty("BandwidthMax", maximum);
+}
+
+void MainWindow::handleDriveHealth(const DriveHealth &health)
+{
+    m_driveHealth = health;
+    updateInsightsPanel();
+}
+
+void MainWindow::setupInsightsPanel()
+{
+    QFrame *panel = new QFrame(ui->centralwidget);
+    panel->setObjectName(QStringLiteral("insightsPanel"));
+    panel->setGeometry(10, 400, 551, 132);
+
+    // One column per figure: the ring with what it measures underneath.
+    auto column = [panel](HealthGauge *&gauge, const QString &title, const QString &toolTip) {
+        gauge = new HealthGauge(panel);
+        gauge->setFixedSize(72, 72);
+        gauge->setToolTip(toolTip);
+
+        QLabel *caption = new QLabel(title, panel);
+        caption->setObjectName(QStringLiteral("healthTitle"));
+        caption->setAlignment(Qt::AlignCenter);
+        caption->setToolTip(toolTip);
+
+        QVBoxLayout *layout = new QVBoxLayout;
+        layout->setSpacing(2);
+        layout->addWidget(gauge, 0, Qt::AlignHCenter);
+        layout->addWidget(caption);
+        return layout;
+    };
+
+    QVBoxLayout *driveColumn = column(m_healthGauge, tr("DRIVE HEALTH"),
+        tr("Wear level reported by the drive itself (SMART). 100 % is a drive with no wear."));
+    QVBoxLayout *fsColumn = column(m_fsGauge, tr("FILESYSTEM"),
+        tr("Health of the filesystem from the kernel's error counters. 100 % means no errors recorded."));
+    QVBoxLayout *perfColumn = column(m_perfGauge, tr("PERFORMANCE"),
+        tr("Your results compared with a mainstream NVMe SSD. 100 % is that reference, higher is faster."));
+    m_perfGauge->setPerformanceMode(true);
+
+    m_scoreValue = new QLabel(QStringLiteral("-"), panel);
+    m_scoreValue->setObjectName(QStringLiteral("scoreValue"));
+    m_scoreValue->setAlignment(Qt::AlignCenter);
+
+    QLabel *scoreCaption = new QLabel(tr("SCORE"), panel);
+    scoreCaption->setAlignment(Qt::AlignCenter);
+
+    m_scoreRating = new QLabel(panel);
+    m_scoreRating->setObjectName(QStringLiteral("scoreRating"));
+    m_scoreRating->setAlignment(Qt::AlignCenter);
+
+    QVBoxLayout *scoreLayout = new QVBoxLayout;
+    scoreLayout->setSpacing(0);
+    scoreLayout->addStretch();
+    scoreLayout->addWidget(scoreCaption);
+    scoreLayout->addWidget(m_scoreValue);
+    scoreLayout->addWidget(m_scoreRating);
+    scoreLayout->addStretch();
+
+    QHBoxLayout *figures = new QHBoxLayout;
+    figures->setSpacing(10);
+    figures->addLayout(driveColumn);
+    figures->addLayout(fsColumn);
+    figures->addLayout(perfColumn);
+    figures->addStretch();
+    figures->addLayout(scoreLayout);
+
+    // Details of the drive health reading, or why it is not available
+    m_healthDetails = new QLabel(panel);
+    m_healthDetails->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_healthDetails->setWordWrap(true);
+
+    QVBoxLayout *layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(12, 8, 16, 8);
+    layout->setSpacing(4);
+    layout->addLayout(figures);
+    layout->addWidget(m_healthDetails);
+
+    updateInsightsPanel();
+}
+
+FilesystemHealth MainWindow::currentFilesystemHealth() const
+{
+    const QStorageInfo volume(m_benchmark->getBenchmarkFile());
+    return FilesystemHealth::read(QString::fromLatin1(volume.device()), QString::fromLatin1(volume.fileSystemType()));
+}
+
+void MainWindow::updateInsightsPanel()
+{
+    if (!m_healthGauge) return;
+
+    const DriveHealth &h = m_driveHealth;
+
+    if (!h.available) {
+        m_healthGauge->setHealth(-1);
+        m_healthDetails->setText(h.message.isEmpty()
+                                 ? tr("Drive health: run a benchmark to read the drive's SMART data.")
+                                 : tr("Drive health: %1").arg(h.message));
+    }
+    else {
+        QStringList details;
+
+        if (!h.model.isEmpty())
+            details << h.model;
+
+        if (h.smartPassed >= 0)
+            details << tr("SMART: %1").arg(h.smartPassed == 1 ? tr("PASSED") : tr("FAILED"));
+        if (h.hasTemperature())
+            details << tr("%1 °C").arg(h.temperatureC);
+        if (h.powerOnHours >= 0)
+            details << tr("%1 h powered on").arg(h.powerOnHours);
+        if (!h.hasHealthPercent())
+            details << tr("This drive does not report a wear level.");
+
+        m_healthGauge->setHealth(h.healthPercent);
+        m_healthDetails->setText(details.join(QStringLiteral("  ·  ")));
+    }
+
+    const FilesystemHealth fs = currentFilesystemHealth();
+    m_fsGauge->setHealth(fs.available ? fs.healthPercent : -1);
+    m_fsGauge->setToolTip(fs.available
+                          ? tr("%1: %2 recorded errors").arg(fs.filesystem).arg(fs.errorCount)
+                          : fs.message);
+
+    // Score and performance from the bars that are currently filled in
+    const QJsonObject summary = ReportData::summarize(getBenchmarkReport().value(QStringLiteral("results")).toArray());
+    const int score = summary.value(QStringLiteral("score")).toInt();
+    m_scoreValue->setText(score > 0 ? QString::number(score) : QStringLiteral("-"));
+    m_scoreRating->setText(score > 0 ? summary.value(QStringLiteral("rating")).toString() : QString());
+
+    const QJsonValue performance = summary.value(QStringLiteral("performance_percent"));
+    m_perfGauge->setHealth(performance.isDouble() ? performance.toInt() : -1);
 }
 
 void MainWindow::updateProgressBar(QProgressBar *progressBar)
