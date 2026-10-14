@@ -11,6 +11,7 @@
 #include <signal.h>
 
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/statfs.h>
 #include <linux/fs.h>
 #include <fcntl.h>
@@ -196,6 +197,14 @@ QVariantMap Helper::initSession()
         return {{"success", false}, {"error", "There are already registered DBus connection."}};
     }
 
+    // The authorization below spins a nested event loop, so another initSession() can be
+    // dispatched while it is pending. Without this guard two callers could both be authorised
+    // for the single session, and a caller denied in the meantime would quit the helper
+    // under the one whose prompt is still open.
+    if (m_authInProgress) {
+        return {{"success", false}, {"error", "Another authorization is already in progress."}};
+    }
+
     PolkitQt1::SystemBusNameSubject subject(message().service());
     PolkitQt1::Authority *authority = PolkitQt1::Authority::instance();
 
@@ -206,8 +215,10 @@ QVariantMap Helper::initSession()
         e.quit();
     });
 
+    m_authInProgress = true;
     authority->checkAuthorization(QStringLiteral("dev.jonmagon.kdiskmark.helper.init"), subject, PolkitQt1::Authority::AllowUserInteraction);
     e.exec();
+    m_authInProgress = false;
 
     if (authority->hasError()) {
         qDebug() << "Encountered error while checking authorization, error code: " << authority->lastError() << authority->errorDetails();
@@ -470,14 +481,24 @@ QVariantMap Helper::createNoCowDirectory(const QString &path)
         return {{"success", false}, {"error", pathError}};
     }
 
-    QDir dir(directory);
-    QString newDir = dir.absoluteFilePath(QStringLiteral("kdiskmark_no_cow"));
+    const QString newDir = QDir(directory).absoluteFilePath(QStringLiteral("kdiskmark_no_cow"));
+    const QByteArray newDirPath = newDir.toUtf8();
 
-    if (!QDir().mkpath(newDir)) {
-        return {{"success", false}, {"error", QStringLiteral("Failed to create directory: %1").arg(newDir)}};
+    // Create the directory ourselves instead of mkpath(): if the name already exists it must be
+    // a real directory that this helper (root) owns. A link, or a directory somebody else planted
+    // in a shared parent such as /tmp, is refused before anything is changed on it.
+    if (mkdir(newDirPath.constData(), 0755) != 0) {
+        if (errno != EEXIST) {
+            return {{"success", false}, {"error", QStringLiteral("Failed to create directory: %1").arg(newDir)}};
+        }
+
+        struct stat st;
+        if (lstat(newDirPath.constData(), &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != geteuid()) {
+            return {{"success", false}, {"error", QStringLiteral("%1 already exists and is not a directory owned by the helper.").arg(newDir)}};
+        }
     }
 
-    int fd = open(newDir.toUtf8().constData(), O_RDONLY);
+    int fd = open(newDirPath.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0) {
         return {{"success", false}, {"error", QStringLiteral("Cannot open new directory: %1").arg(strerror(errno))}};
     }

@@ -71,6 +71,7 @@ signals:
 private:
     HelperAdaptor *m_helperAdaptor;
     QDBusServiceWatcher *m_serviceWatcher = nullptr;
+    bool m_authInProgress = false;
 
     QProcess *m_process = nullptr;
     QTemporaryFile m_benchmarkFile;
