@@ -62,7 +62,7 @@ public:
 
 private:
     bool isCallerAuthorized();
-    bool testFilePath(const QString &benchmarkPath);
+    bool resolveDirectory(const QString &path, QString *resolved, QString *error);
     bool startFio(const QStringList &arguments);
 
 signals:

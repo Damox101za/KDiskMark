@@ -3,6 +3,8 @@
 #include <QCoreApplication>
 #include <QtDBus>
 #include <QFile>
+#include <QFileInfo>
+#include <QDir>
 #include <PolkitQt1/Authority>
 #include <PolkitQt1/Subject>
 
@@ -236,23 +238,40 @@ QVariantMap Helper::endSession()
     return {};
 }
 
-bool Helper::testFilePath(const QString &benchmarkPath)
+// Turns a client supplied directory into the canonical path that is then used for every operation.
+// Symlinks anywhere in the path are resolved once, here, so the later calls never traverse a link,
+// and the pseudo filesystems and device nodes are refused after resolution, which makes spellings
+// such as //dev, /./dev or a link into /proc ineffective.
+bool Helper::resolveDirectory(const QString &path, QString *resolved, QString *error)
 {
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 14, 0))
-    if (QFileInfo(benchmarkPath).isSymbolicLink()) {
-#else
-    // detects *.lnk on Windows, but there's not Windows version, whatever
-    if (QFileInfo(benchmarkPath).isSymLink()) {
-#endif
-        qWarning("The path should not be symbolic link.");
+    if (!path.startsWith(QLatin1Char('/'))) {
+        *error = QStringLiteral("The path must be absolute.");
         return false;
     }
 
-    if (benchmarkPath.startsWith("/dev")) {
-        qWarning("Cannot specify a raw device.");
+    const QFileInfo info(path);
+
+    // A link as the last component is refused outright, as before
+    if (info.isSymLink()) {
+        *error = QStringLiteral("The path should not be symbolic link.");
         return false;
     }
 
+    const QString canonical = info.canonicalFilePath();
+    if (canonical.isEmpty() || !QFileInfo(canonical).isDir()) {
+        *error = QStringLiteral("The path is not an existing directory.");
+        return false;
+    }
+
+    for (const char *forbidden : { "/dev", "/proc", "/sys" }) {
+        const QString root = QLatin1String(forbidden);
+        if (canonical == root || canonical.startsWith(root + QLatin1Char('/'))) {
+            *error = QStringLiteral("The path cannot be inside %1.").arg(root);
+            return false;
+        }
+    }
+
+    *resolved = canonical;
     return true;
 }
 
@@ -272,8 +291,9 @@ QVariantMap Helper::prepareBenchmarkFile(const QString &benchmarkPath, int fileS
         return {{"success", false}, {"error", "A new benchmark session should be started."}};
     }
 
-    if (!testFilePath(benchmarkPath)) {
-        return {{"success", false}, {"error", "The path to the file is incorrect."}};
+    QString directory, pathError;
+    if (!resolveDirectory(benchmarkPath, &directory, &pathError)) {
+        return {{"success", false}, {"error", pathError}};
     }
 
     // Checked before the file is created so a rejected request leaves nothing behind
@@ -281,7 +301,7 @@ QVariantMap Helper::prepareBenchmarkFile(const QString &benchmarkPath, int fileS
         return {{"success", false}, {"error", error}};
     }
 
-    m_benchmarkFile.setFileTemplate(QStringLiteral("%1/%2").arg(benchmarkPath).arg("kdiskmark-XXXXXX.tmp"));
+    m_benchmarkFile.setFileTemplate(QStringLiteral("%1/%2").arg(directory).arg("kdiskmark-XXXXXX.tmp"));
 
     if (!m_benchmarkFile.open()) {
         return {{"success", false}, {"error", QStringLiteral("An error occurred while creating the benchmark file: %1").arg(m_benchmarkFile.errorString())}};
@@ -404,12 +424,13 @@ QVariantMap Helper::checkCowStatus(const QString &path)
         return {};
     }
 
-    if (!testFilePath(path)) {
-        return {{"success", false}, {"error", "The path is incorrect."}};
+    QString directory, pathError;
+    if (!resolveDirectory(path, &directory, &pathError)) {
+        return {{"success", false}, {"error", pathError}};
     }
 
     struct statfs fs_info;
-    if (statfs(path.toUtf8().constData(), &fs_info) != 0) {
+    if (statfs(directory.toUtf8().constData(), &fs_info) != 0) {
         return {{"success", false}, {"error", QStringLiteral("Cannot get filesystem info: %1").arg(strerror(errno))}};
     }
 
@@ -421,7 +442,7 @@ QVariantMap Helper::checkCowStatus(const QString &path)
             return {{"success", true}, {"hasCow", false}};
     }
 
-    int fd = open(path.toUtf8().constData(), O_RDONLY);
+    int fd = open(directory.toUtf8().constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (fd < 0) {
         return {{"success", false}, {"error", QStringLiteral("Cannot open directory: %1").arg(strerror(errno))}};
     }
@@ -431,7 +452,7 @@ QVariantMap Helper::checkCowStatus(const QString &path)
     if (ioctl(fd, FS_IOC_GETFLAGS, &flags) >= 0) {
         hasCow = !(flags & FS_NOCOW_FL);
     } else {
-        qWarning() << QStringLiteral("Failed to get FS flags for") << path << QStringLiteral(":") << strerror(errno);
+        qWarning() << QStringLiteral("Failed to get FS flags for") << directory << QStringLiteral(":") << strerror(errno);
     }
 
     close(fd);
@@ -444,11 +465,12 @@ QVariantMap Helper::createNoCowDirectory(const QString &path)
         return {};
     }
 
-    if (!testFilePath(path)) {
-        return {{"success", false}, {"error", "The path is incorrect."}};
+    QString directory, pathError;
+    if (!resolveDirectory(path, &directory, &pathError)) {
+        return {{"success", false}, {"error", pathError}};
     }
 
-    QDir dir(path);
+    QDir dir(directory);
     QString newDir = dir.absoluteFilePath(QStringLiteral("kdiskmark_no_cow"));
 
     if (!QDir().mkpath(newDir)) {
