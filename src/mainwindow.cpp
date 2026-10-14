@@ -12,6 +12,10 @@
 #include <QStyleFactory>
 #include <QTimer>
 #include <QActionGroup>
+#include <QDateTime>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QSysInfo>
 
 #include "math.h"
 #include "about.h"
@@ -19,6 +23,7 @@
 #include "diskdriveinfo.h"
 #include "storageitemdelegate.h"
 #include "global.h"
+#include "reportdata.h"
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -56,6 +61,10 @@ MainWindow::MainWindow(QWidget *parent)
 
     ui->actionCopy->setIcon(QIcon::fromTheme("edit-copy"));
     ui->actionSave->setIcon(QIcon::fromTheme("document-save"));
+
+    QAction *exportHistoryAction = new QAction(tr("Export History as CSV..."), this);
+    ui->menuFile->insertAction(ui->actionExit, exportHistoryAction);
+    connect(exportHistoryAction, &QAction::triggered, this, &MainWindow::exportHistory);
     ui->actionExit->setIcon(QIcon::fromTheme("application-exit"));
     ui->menuTest_Data->setIcon(QIcon::fromTheme("distribute-randomize"));
     ui->actionQueues_Threads->setIcon(QIcon::fromTheme("configure"));
@@ -127,6 +136,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->actionTheme_Stylesheet_Light->setActionGroup(themeGroup);
     ui->actionTheme_Stylesheet_Dark->setActionGroup(themeGroup);
     ui->actionTheme_Do_not_apply->setActionGroup(themeGroup);
+
     connect(themeGroup, SIGNAL(triggered(QAction*)), this, SLOT(themeSelected(QAction*)));
 
     m_progressBars << ui->readBar_1 << ui->writeBar_1 << ui->mixBar_1
@@ -185,6 +195,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_benchmark, &Benchmark::runningStateChanged, this, &MainWindow::benchmarkStateChanged);
     connect(m_benchmark, &Benchmark::benchmarkStatusUpdate, this, &MainWindow::benchmarkStatusUpdate);
     connect(m_benchmark, &Benchmark::resultReady, this, &MainWindow::handleResults);
+    connect(m_benchmark, &Benchmark::statsReady, this, &MainWindow::handleStats);
     connect(m_benchmark, &Benchmark::failed, this, &MainWindow::benchmarkFailed);
     connect(m_benchmark, &Benchmark::cowCheckRequired, this, &MainWindow::handleCowCheck);
     connect(m_benchmark, &Benchmark::directoryChanged, this, &MainWindow::handleDirectoryChanged);
@@ -669,23 +680,164 @@ QString MainWindow::getTextBenchmarkResult()
 void MainWindow::on_actionCopy_triggered()
 {
     QClipboard *clipboard = QApplication::clipboard();
-    clipboard->setText(getTextBenchmarkResult());
+    clipboard->setText(getTextBenchmarkResult() + QLatin1Char('\n') + ReportData::toTextExtras(getBenchmarkReport()));
+}
+
+QJsonObject MainWindow::getBenchmarkReport()
+{
+    const AppSettings settings;
+    const Global::PerformanceProfile profile = settings.getPerformanceProfile();
+    const bool demo = profile == Global::PerformanceProfile::Demo;
+    const QMetaEnum unitEnum = QMetaEnum::fromType<Global::ComparisonUnit>();
+
+    QJsonArray results;
+
+    auto addRow = [&](const QString &section, const QProgressBar *bar, Global::BenchmarkTest test) {
+        const Global::BenchmarkParams params = settings.getBenchmarkParams(test, profile);
+        const double bandwidth = bar->property(unitEnum.valueToKey(Global::ComparisonUnit::MBPerSec)).toDouble();
+
+        results.append(QJsonObject {
+            { QStringLiteral("section"), section },
+            { QStringLiteral("pattern"), params.Pattern == Global::BenchmarkIOPattern::SEQ
+                                         ? QStringLiteral("sequential") : QStringLiteral("random") },
+            { QStringLiteral("block_size_kib"), params.BlockSize },
+            { QStringLiteral("queue_depth"), params.Queues },
+            { QStringLiteral("threads"), params.Threads },
+            { QStringLiteral("bandwidth_mb_s"), bandwidth },
+            { QStringLiteral("bandwidth_min_mb_s"), bar->property("BandwidthMin").isValid()
+                                                    ? bar->property("BandwidthMin").toDouble() : bandwidth },
+            { QStringLiteral("bandwidth_avg_mb_s"), bar->property("BandwidthAvg").isValid()
+                                                    ? bar->property("BandwidthAvg").toDouble() : bandwidth },
+            { QStringLiteral("bandwidth_max_mb_s"), bar->property("BandwidthMax").isValid()
+                                                    ? bar->property("BandwidthMax").toDouble() : bandwidth },
+            { QStringLiteral("iops"),
+              bar->property(unitEnum.valueToKey(Global::ComparisonUnit::IOPS)).toDouble() },
+            { QStringLiteral("latency_us"),
+              bar->property(unitEnum.valueToKey(Global::ComparisonUnit::Latency)).toDouble() }
+        });
+    };
+
+    auto addSection = [&](const QString &section, const QVector<QProgressBar*> &bars) {
+        const int count = demo ? 1 : (profile == Global::PerformanceProfile::Default ? 4 : 2);
+        for (int i = 0; i < count && i < bars.size(); i++)
+            addRow(section, bars[i], static_cast<Global::BenchmarkTest>(i));
+    };
+
+    if (demo) {
+        addSection(QStringLiteral("read"), { ui->readBar_Demo });
+        addSection(QStringLiteral("write"), { ui->writeBar_Demo });
+    }
+    else {
+        addSection(QStringLiteral("read"),  { ui->readBar_1,  ui->readBar_2,  ui->readBar_3,  ui->readBar_4 });
+        addSection(QStringLiteral("write"), { ui->writeBar_1, ui->writeBar_2, ui->writeBar_3, ui->writeBar_4 });
+        if (settings.getMixedState())
+            addSection(QStringLiteral("mix"), { ui->mixBar_1, ui->mixBar_2, ui->mixBar_3, ui->mixBar_4 });
+    }
+
+    const QString benchmarkDir = m_benchmark->getBenchmarkFile();
+    const QStorageInfo volume(benchmarkDir);
+
+    QJsonObject report {
+        { QStringLiteral("date"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate) },
+        { QStringLiteral("app_version"), qApp->applicationVersion() },
+        { QStringLiteral("fio_version"), m_benchmark->getFIOVersion() },
+        { QStringLiteral("os"), QStringLiteral("%1 %2 [%3 %4]").arg(QSysInfo::productType(), QSysInfo::productVersion(),
+                                                                    QSysInfo::kernelType(), QSysInfo::kernelVersion()) },
+        { QStringLiteral("target"), ui->comboBox_Storages->currentText() },
+        { QStringLiteral("device_model"), ui->deviceModel->text() },
+        { QStringLiteral("profile"), QString::fromLatin1(QMetaEnum::fromType<Global::PerformanceProfile>().valueToKey(profile)) },
+        { QStringLiteral("mixed"), settings.getMixedState() },
+        { QStringLiteral("mix_read_percent"), settings.getRandomReadPercentage() },
+        { QStringLiteral("file_size_mib"), settings.getFileSize() },
+        { QStringLiteral("loops"), settings.getLoopsCount() },
+        { QStringLiteral("measuring_time_s"), settings.getMeasuringTime() },
+        { QStringLiteral("interval_time_s"), settings.getIntervalTime() },
+        { QStringLiteral("test_data"), settings.getBenchmarkTestData() == Global::BenchmarkTestData::Zeros
+                                       ? QStringLiteral("zeros") : QStringLiteral("random") },
+        { QStringLiteral("system"), ReportData::systemInfo() },
+        { QStringLiteral("drive"), QJsonObject {
+            { QStringLiteral("device"), QString::fromLatin1(volume.device()) },
+            { QStringLiteral("model"), ui->deviceModel->text() },
+            { QStringLiteral("filesystem"), QString::fromLatin1(volume.fileSystemType()) },
+            { QStringLiteral("target_total_bytes"), static_cast<double>(volume.bytesTotal()) },
+            { QStringLiteral("target_free_bytes"), static_cast<double>(volume.bytesFree()) }
+        } },
+        { QStringLiteral("summary"), ReportData::summarize(results) },
+        { QStringLiteral("results"), results }
+    };
+
+    return report;
 }
 
 void MainWindow::on_actionSave_triggered()
 {
-    QString fileName =
-            QFileDialog::getSaveFileName(this, QString(),
-                                         QStringLiteral("KDM_%1%2.txt").arg(QDate::currentDate().toString("yyyyMMdd"))
-                                         .arg(QTime::currentTime().toString("hhmmss")));
-    if (!fileName.isEmpty()) {
-        QFile file(fileName);
-        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            QTextStream out(&file);
-            out << getTextBenchmarkResult();
-            file.close();
-        }
+    const QString baseName = QStringLiteral("KDM_%1%2").arg(QDate::currentDate().toString("yyyyMMdd"))
+                                                       .arg(QTime::currentTime().toString("hhmmss"));
+
+    QString selectedFilter;
+    QString fileName = QFileDialog::getSaveFileName(
+                this, QString(), baseName + QStringLiteral(".txt"),
+                tr("Text (*.txt);;CSV (*.csv);;JSON (*.json)"), &selectedFilter);
+
+    if (fileName.isEmpty())
+        return;
+
+    // The format follows the extension typed by the user, otherwise the chosen filter.
+    QString suffix = QFileInfo(fileName).suffix().toLower();
+    if (suffix != QLatin1String("csv") && suffix != QLatin1String("json") && suffix != QLatin1String("txt")) {
+        suffix = selectedFilter.startsWith(QLatin1String("CSV")) ? QStringLiteral("csv")
+               : selectedFilter.startsWith(QLatin1String("JSON")) ? QStringLiteral("json")
+               : QStringLiteral("txt");
+        fileName += QLatin1Char('.') + suffix;
     }
+
+    const QJsonObject report = getBenchmarkReport();
+
+    QString error;
+    bool ok;
+    if (suffix == QLatin1String("csv"))
+        ok = ReportData::writeText(fileName, ReportData::toCsv(report), &error);
+    else if (suffix == QLatin1String("json"))
+        ok = ReportData::writeJson(fileName, report, &error);
+    else
+        ok = ReportData::writeText(fileName, getTextBenchmarkResult() + QLatin1Char('\n') + ReportData::toTextExtras(report), &error);
+
+    if (!ok) {
+        QMessageBox::warning(this, QString(), tr("Failed to save the report: %1").arg(error));
+        return;
+    }
+
+    // Every saved report is also kept in the JSON history for later exporting.
+    if (!ReportData::appendToHistory(report, &error)) {
+        QMessageBox::warning(this, QString(),
+                             tr("The report was saved, but could not be added to the history (%1): %2")
+                             .arg(ReportData::historyPath(), error));
+    }
+}
+
+void MainWindow::exportHistory()
+{
+    QString error;
+    const QJsonArray history = ReportData::loadHistory(&error);
+
+    if (!error.isEmpty()) {
+        QMessageBox::warning(this, QString(), tr("Cannot read the history: %1").arg(error));
+        return;
+    }
+
+    if (history.isEmpty()) {
+        QMessageBox::information(this, QString(), tr("There are no saved reports in the history yet."));
+        return;
+    }
+
+    const QString fileName = QFileDialog::getSaveFileName(
+                this, QString(), QStringLiteral("KDM_history.csv"), tr("CSV (*.csv)"));
+
+    if (fileName.isEmpty())
+        return;
+
+    if (!ReportData::writeText(fileName, ReportData::toCsv(history), &error))
+        QMessageBox::warning(this, QString(), tr("Failed to export the history: %1").arg(error));
 }
 
 void MainWindow::on_loopsCount_valueChanged(int arg1)
@@ -840,7 +992,6 @@ void MainWindow::presetSelected(QAction* act)
     updateBenchmarkButtonsContent();
 }
 
-
 void MainWindow::updateProgressBarsStyle()
 {
     QStyle *progressBarStyleFusion = QStyleFactory::create(QStringLiteral("Fusion"));
@@ -994,6 +1145,18 @@ void MainWindow::handleResults(QObject *target, const Benchmark::PerformanceResu
     }
 
     updateProgressBar(progressBar);
+}
+
+void MainWindow::handleStats(QObject *target, float minimum, float average, float maximum, int samples)
+{
+    Q_UNUSED(samples)
+
+    QProgressBar *progressBar = qobject_cast<QProgressBar*>(target);
+    if (!progressBar) return;
+
+    progressBar->setProperty("BandwidthMin", minimum);
+    progressBar->setProperty("BandwidthAvg", average);
+    progressBar->setProperty("BandwidthMax", maximum);
 }
 
 void MainWindow::updateProgressBar(QProgressBar *progressBar)

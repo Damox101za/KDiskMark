@@ -137,6 +137,8 @@ add_executable(${PROJECT_NAME}
     src/global.cpp
     src/diskdriveinfo.h
     src/diskdriveinfo.cpp
+    src/reportdata.h
+    src/reportdata.cpp
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
