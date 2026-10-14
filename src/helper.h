@@ -63,6 +63,7 @@ public:
 private:
     bool isCallerAuthorized();
     bool testFilePath(const QString &benchmarkPath);
+    bool startFio(const QStringList &arguments);
 
 signals:
     void taskFinished(bool, QString, QString);

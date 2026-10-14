@@ -88,6 +88,35 @@ Helper::Helper() : m_helperAdaptor(new HelperAdaptor(this))
     });
 
     QObject::connect(this, &Helper::taskFinished, m_helperAdaptor, &HelperAdaptor::taskFinished);
+
+    // A single process object, owned by the helper, so a fio that is still running is
+    // killed when the helper exits and finished() always refers to the current task.
+    m_process = new QProcess(this);
+
+    connect(m_process, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
+            this, [this](int, QProcess::ExitStatus exitStatus) {
+        emit taskFinished(exitStatus == QProcess::NormalExit,
+                          QString(m_process->readAllStandardOutput()),
+                          QString(m_process->readAllStandardError()));
+    });
+
+    // finished() is not emitted when fio cannot be started at all, report that as a failed task
+    // instead of leaving the client waiting forever.
+    connect(m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) {
+            emit taskFinished(false, QString(), m_process->errorString());
+        }
+    });
+}
+
+bool Helper::startFio(const QStringList &arguments)
+{
+    if (m_process->state() != QProcess::NotRunning) {
+        return false;
+    }
+
+    m_process->start(QStringLiteral("fio"), arguments);
+    return true;
 }
 
 QVariantMap Helper::initSession()
@@ -172,6 +201,10 @@ QVariantMap Helper::prepareBenchmarkFile(const QString &benchmarkPath, int fileS
         return {};
     }
 
+    if (m_process->state() != QProcess::NotRunning) {
+        return {{"success", false}, {"error", "Another task is still running."}};
+    }
+
     // If benchmarking has been done, but removeBenchmarkFile has not been called,
     // and benchmarking on a new file is called, then reject the request. The *previous* file must be removed first.
     if (!m_benchmarkFile.fileName().isNull()) {
@@ -188,19 +221,13 @@ QVariantMap Helper::prepareBenchmarkFile(const QString &benchmarkPath, int fileS
         return {{"success", false}, {"error", QStringLiteral("An error occurred while creating the benchmark file: %1").arg(m_benchmarkFile.errorString())}};
     }
 
-    m_process = new QProcess();
-    m_process->start("fio", QStringList()
-                     << QStringLiteral("--output-format=json")
-                     << QStringLiteral("--create_only=1")
-                     << QStringLiteral("--filename=%1").arg(m_benchmarkFile.fileName())
-                     << QStringLiteral("--size=%1m").arg(fileSize)
-                     << QStringLiteral("--zero_buffers=%1").arg(fillZeros)
-                     << QStringLiteral("--name=prepare"));
-
-    connect(m_process, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
-            [=] (int exitCode, QProcess::ExitStatus exitStatus) {
-        emit taskFinished(exitStatus == QProcess::NormalExit, QString(m_process->readAllStandardOutput()), QString(m_process->readAllStandardError()));
-    });
+    startFio(QStringList()
+             << QStringLiteral("--output-format=json")
+             << QStringLiteral("--create_only=1")
+             << QStringLiteral("--filename=%1").arg(m_benchmarkFile.fileName())
+             << QStringLiteral("--size=%1m").arg(fileSize)
+             << QStringLiteral("--zero_buffers=%1").arg(fillZeros)
+             << QStringLiteral("--name=prepare"));
 
     return {{"success", true}};
 }
@@ -216,8 +243,7 @@ QVariantMap Helper::startBenchmarkTest(int measuringTime, int fileSize, int rand
         return {{"success", false}, {"error", "The benchmark file was not pre-created."}};
     }
 
-    m_process = new QProcess();
-    m_process->start("fio", QStringList()
+    const bool started = startFio(QStringList()
                      << QStringLiteral("--output-format=json")
                      << QStringLiteral("--ioengine=libaio")
                      << QStringLiteral("--randrepeat=0")
@@ -236,10 +262,9 @@ QVariantMap Helper::startBenchmarkTest(int measuringTime, int fileSize, int rand
                      << QStringLiteral("--numjobs=%1").arg(threads)
                      << QStringLiteral("--group_reporting"));
 
-    connect(m_process, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
-            [=] (int exitCode, QProcess::ExitStatus exitStatus) {
-        emit taskFinished(exitStatus == QProcess::NormalExit, QString(m_process->readAllStandardOutput()), QString(m_process->readAllStandardError()));
-    });
+    if (!started) {
+        return {{"success", false}, {"error", "Another task is still running."}};
+    }
 
     return {{"success", true}};
 }
@@ -288,13 +313,14 @@ QVariantMap Helper::stopCurrentTask()
         return {};
     }
 
-    if (!m_process) {
-        return {{"success", false}, {"error", "The pointer to the process is empty."}};
-    }
-
-    if (m_process->state() == QProcess::Running || m_process->state() == QProcess::Starting) {
+    if (m_process->state() != QProcess::NotRunning) {
         m_process->terminate();
-        m_process->waitForFinished(-1);
+
+        // fio normally exits on SIGTERM; do not let a stuck process block the helper forever.
+        if (!m_process->waitForFinished(5000)) {
+            m_process->kill();
+            m_process->waitForFinished(2000);
+        }
     }
 
     return {{"success", true}};
