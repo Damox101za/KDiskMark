@@ -62,7 +62,8 @@ public:
 
 private:
     bool isCallerAuthorized();
-    bool testFilePath(const QString &benchmarkPath);
+    bool resolveDirectory(const QString &path, QString *resolved, QString *error);
+    bool startFio(const QStringList &arguments);
 
 signals:
     void taskFinished(bool, QString, QString);
@@ -70,7 +71,8 @@ signals:
 private:
     HelperAdaptor *m_helperAdaptor;
     QDBusServiceWatcher *m_serviceWatcher = nullptr;
+    bool m_authInProgress = false;
 
-    QProcess *m_process;
+    QProcess *m_process = nullptr;
     QTemporaryFile m_benchmarkFile;
 };
