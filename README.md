@@ -12,7 +12,7 @@
 ## Features
 * Configurable block size, queues, and threads count for each test
 * Many languages support
-* Report generation
+* Report generation: save as text, CSV or JSON, with a JSON history of saved reports
 * Terminal (TUI) mode for environments without a graphical display
 
 ## Report Example
@@ -40,6 +40,13 @@ Profile: Default
    Date: 2022-08-24 16:10:33
      OS: opensuse-tumbleweed 20220821 [linux 5.19.2-1-default]
 ```
+
+## Saving reports
+**File > Save** writes the report as text (`.txt`), CSV (`.csv`) or JSON (`.json`), depending on the extension you type or the filter you pick.
+
+Every saved report is also appended to a JSON history, `~/.local/share/kdiskmark/kdiskmark/results.json`, which is the source of truth: **File > Export History as CSV...** turns all saved reports into one CSV file, one row per test.
+
+Besides the results, a report contains the minimum, average and maximum bandwidth over the loops of each test, an overall score and performance class, and drive and system information. The layout of the JSON is documented in `src/reportdata.h`; reports saved by older versions are still readable.
 
 ## Dependencies
 ### Required

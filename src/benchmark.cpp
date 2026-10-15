@@ -44,6 +44,7 @@ void Benchmark::startTest(int blockSize, int queueDepth, int threads, const QStr
     const AppSettings settings;
 
     PerformanceResult totalRead { 0, 0, 0 }, totalWrite { 0, 0, 0 };
+    QVector<float> samples;
 
     unsigned int index = 0;
 
@@ -89,6 +90,17 @@ void Benchmark::startTest(int blockSize, int queueDepth, int threads, const QStr
 
                 auto result = parseResult(output, errorOutput);
 
+                if (rw.contains("read")) {
+                    samples << result.read.Bandwidth;
+                }
+                else if (rw.contains("write")) {
+                    samples << result.write.Bandwidth;
+                }
+                else {
+                    const float p = settings.getRandomReadPercentage();
+                    samples << (result.read.Bandwidth * p + result.write.Bandwidth * (100.f - p)) / 100.f;
+                }
+
                 switch (settings.getPerformanceProfile())
                 {
                     case Global::PerformanceProfile::Default:
@@ -114,6 +126,8 @@ void Benchmark::startTest(int blockSize, int queueDepth, int threads, const QStr
                 float p = settings.getRandomReadPercentage();
                 sendResult((totalRead * p + totalWrite * (100.f - p)) / 100.f, index);
             }
+
+            sendStats(samples);
         };
 
         auto conn = QObject::connect(interface, &DevJonmagonKdiskmarkHelperInterface::taskFinished, exitLoop);
@@ -136,6 +150,22 @@ void Benchmark::sendResult(const Benchmark::PerformanceResult &result, const int
         for (auto target : m_targets) {
             emit resultReady(target, result);
         }
+    }
+}
+
+void Benchmark::sendStats(const QVector<float> &samples)
+{
+    if (samples.isEmpty()) return;
+
+    float minimum = samples.first(), maximum = samples.first(), sum = 0;
+    for (float sample : samples) {
+        minimum = qMin(minimum, sample);
+        maximum = qMax(maximum, sample);
+        sum += sample;
+    }
+
+    for (auto target : m_targets) {
+        emit statsReady(target, minimum, sum / samples.size(), maximum, samples.size());
     }
 }
 

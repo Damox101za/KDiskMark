@@ -39,5 +39,10 @@ jobs:
       run: |
         mkdir build
         cd build
-        cmake -DUSE_QT5=ON ..
+        cmake -DUSE_QT5=ON -DBUILD_TESTS=ON ..
         cmake --build . --parallel 2
+
+    - name: Test
+      run: |
+        cd build
+        ctest --output-on-failure

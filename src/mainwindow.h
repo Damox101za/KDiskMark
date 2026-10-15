@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QJsonObject>
 
 #include "benchmark.h"
 #include "appsettings.h"
@@ -74,6 +75,8 @@ private:
     void closeEvent(QCloseEvent *event);
     QString formatSize(quint64 available, quint64 total);
     QString getTextBenchmarkResult();
+    QJsonObject getBenchmarkReport();
+    void exportHistory();
     void updateBenchmarkButtonsContent();
     void updatePresetsSelection();
     void refreshProgressBars();
@@ -89,6 +92,7 @@ public slots:
     void benchmarkStatusUpdate(const QString &name);
     void benchmarkFailed(const QString &error);
     void handleResults(QObject *target, const Benchmark::PerformanceResult &result);
+    void handleStats(QObject *target, float minimum, float average, float maximum, int samples);
     void localeSelected(QAction* act);
     void profileSelected(QAction* act);
     void modeSelected(QAction* act);

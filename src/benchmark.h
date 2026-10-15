@@ -92,6 +92,7 @@ private:
     void startTest(int blockSize, int queueDepth, int threads, const QString &rw, const QString &statusMessage);
     Benchmark::ParsedJob parseResult(const QString &output, const QString &errorOutput);
     void sendResult(const Benchmark::PerformanceResult &result, const int index);
+    void sendStats(const QVector<float> &samples);
 
     void initSession();
     void prepareDirectory(const QString &benchmarkFile);
@@ -102,6 +103,8 @@ private:
 signals:
     void benchmarkStatusUpdate(const QString &name);
     void resultReady(QObject *target, const Benchmark::PerformanceResult &result);
+    // Bandwidth (MB/s) of the individual loops of a test: minimum, average, maximum and loops done.
+    void statsReady(QObject *target, float minimum, float average, float maximum, int samples);
     void failed(const QString &error);
     void finished();
     void runningStateChanged(bool state);
