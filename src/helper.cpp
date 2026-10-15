@@ -6,6 +6,9 @@
 #include <QSocketNotifier>
 #include <QFileInfo>
 #include <QDir>
+#include <QProcess>
+#include <QRegularExpression>
+#include <QStandardPaths>
 #include <PolkitQt1/Authority>
 #include <PolkitQt1/Subject>
 
@@ -146,6 +149,11 @@ QVariantMap HelperAdaptor::checkCowStatus(const QString &path)
 QVariantMap HelperAdaptor::createNoCowDirectory(const QString &path)
 {
     return m_parentHelper->createNoCowDirectory(path);
+}
+
+QVariantMap HelperAdaptor::getDriveHealth(const QString &device)
+{
+    return m_parentHelper->getDriveHealth(device);
 }
 
 Helper::Helper() : m_helperAdaptor(new HelperAdaptor(this))
@@ -580,6 +588,53 @@ QVariantMap Helper::createNoCowDirectory(const QString &path)
     }
 
     return {{"success", true}, {"path", newDir}};
+}
+
+QVariantMap Helper::getDriveHealth(const QString &requested)
+{
+    if (!isCallerAuthorized()) {
+        return {};
+    }
+
+    // The client's spelling is only a request: it must name something under /dev, and what is
+    // used from here on is the canonical node it resolves to (/dev/mapper/x -> /dev/dm-0).
+    // Only plain block devices directly under /dev are accepted, smartctl is started without a shell.
+    if (!requested.startsWith(QStringLiteral("/dev/"))) {
+        return {{"success", false}, {"error", "The device name is incorrect."}};
+    }
+
+    const QString device = QFileInfo(requested).canonicalFilePath();
+
+    static const QRegularExpression deviceName(QStringLiteral("^/dev/[A-Za-z0-9_-]+$"));
+    if (!deviceName.match(device).hasMatch()) {
+        return {{"success", false}, {"error", "The device name is incorrect."}};
+    }
+
+    struct stat st;
+    if (stat(device.toUtf8().constData(), &st) != 0 || !S_ISBLK(st.st_mode)) {
+        return {{"success", false}, {"error", "The device is not a block device."}};
+    }
+
+    const QString smartctl = QStandardPaths::findExecutable(QStringLiteral("smartctl"),
+        { QStringLiteral("/usr/sbin"), QStringLiteral("/usr/bin"), QStringLiteral("/sbin"), QStringLiteral("/bin"),
+          QStringLiteral("/usr/local/sbin"), QStringLiteral("/usr/local/bin") });
+
+    if (smartctl.isEmpty()) {
+        // Not an error of the benchmark itself: the caller reports health as unavailable.
+        return {{"success", true}, {"available", false}, {"error", "smartmontools (smartctl) is not installed."}};
+    }
+
+    QProcess process;
+    process.start(smartctl, QStringList() << QStringLiteral("-j") << QStringLiteral("-a") << device);
+
+    if (!process.waitForFinished(20000)) {
+        process.kill();
+        process.waitForFinished(1000);
+        return {{"success", true}, {"available", false}, {"error", "smartctl did not finish in time."}};
+    }
+
+    // smartctl uses its exit code as a bit mask of findings, so it is not a failure signal by itself.
+    return {{"success", true}, {"available", true}, {"json", process.readAllStandardOutput()}};
 }
 
 bool Helper::isCallerAuthorized()

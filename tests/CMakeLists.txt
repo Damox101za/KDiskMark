@@ -15,3 +15,4 @@ function(kdiskmark_add_test name)
 endfunction()
 
 kdiskmark_add_test(tst_reportdata ${CMAKE_SOURCE_DIR}/src/reportdata.cpp)
+kdiskmark_add_test(tst_drivehealth ${CMAKE_SOURCE_DIR}/src/drivehealth.cpp)

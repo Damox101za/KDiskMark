@@ -2,6 +2,10 @@
 
 #include "global.h"
 
+#include <QStorageInfo>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
+
 #include "helper_interface.h"
 
 Benchmark::Benchmark()
@@ -169,6 +173,37 @@ void Benchmark::sendStats(const QVector<float> &samples)
     }
 }
 
+void Benchmark::fetchDriveHealth()
+{
+    const QString volumeDevice = QStorageInfo(getBenchmarkFile()).device();
+    const QString device = DriveHealth::physicalDevice(volumeDevice);
+
+    DriveHealth health = DriveHealth::unavailable(tr("Drive health is not available."), device);
+
+    // Health is extra information, so any failure here must never stop the benchmark.
+    if (auto interface = helperInterface()) {
+        QDBusPendingCall pcall = interface->getDriveHealth(device);
+        QDBusPendingCallWatcher watcher(pcall);
+        QEventLoop loop;
+        connect(&watcher, &QDBusPendingCallWatcher::finished, &loop, &QEventLoop::quit);
+        if (!watcher.isFinished()) loop.exec();
+
+        QDBusPendingReply<QVariantMap> reply = pcall;
+        if (!reply.isError()) {
+            const QVariantMap content = reply.value();
+            if (content.value(QStringLiteral("available")).toBool()) {
+                health = DriveHealth::fromSmartctlJson(content.value(QStringLiteral("json")).toByteArray(), device);
+            }
+            else {
+                const QString error = content.value(QStringLiteral("error")).toString();
+                if (!error.isEmpty()) health = DriveHealth::unavailable(error, device);
+            }
+        }
+    }
+
+    emit driveHealthReady(health);
+}
+
 Benchmark::ParsedJob Benchmark::parseResult(const QString &output, const QString &errorOutput)
 {
     QJsonDocument jsonResponse = QJsonDocument::fromJson(output.toUtf8());
@@ -265,6 +300,8 @@ void Benchmark::runBenchmark(QList<QPair<QPair<Global::BenchmarkTest, Global::Be
     }
 
     prepareFile(getBenchmarkFile(), settings.getFileSize());
+
+    if (isRunning()) fetchDriveHealth();
 
     while (iter.hasNext() && isRunning()) {
         item = iter.next();

@@ -140,6 +140,10 @@ add_executable(${PROJECT_NAME}
     src/diskdriveinfo.cpp
     src/reportdata.h
     src/reportdata.cpp
+    src/drivehealth.h
+    src/drivehealth.cpp
+    src/healthgauge.h
+    src/healthgauge.cpp
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE

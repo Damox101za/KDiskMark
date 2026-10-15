@@ -6,9 +6,12 @@
 
 #include "benchmark.h"
 #include "appsettings.h"
+#include "drivehealth.h"
 
 class QComboBox;
 class QProgressBar;
+class QLabel;
+class HealthGauge;
 class QStorageInfo;
 
 QT_BEGIN_NAMESPACE
@@ -67,6 +70,17 @@ private:
     Benchmark *m_benchmark;
     QVector<QProgressBar*> m_progressBars;
     QString m_windowTitle;
+    DriveHealth m_driveHealth;
+    HealthGauge *m_healthGauge = nullptr;
+    HealthGauge *m_fsGauge = nullptr;
+    HealthGauge *m_perfGauge = nullptr;
+    QLabel *m_healthDetails = nullptr;
+    QLabel *m_scoreValue = nullptr;
+    QLabel *m_scoreRating = nullptr;
+
+    void setupInsightsPanel();
+    void updateInsightsPanel();
+    FilesystemHealth currentFilesystemHealth() const;
 
     void updateFileSizeList();
     void updateStoragesList();
@@ -93,6 +107,7 @@ public slots:
     void benchmarkFailed(const QString &error);
     void handleResults(QObject *target, const Benchmark::PerformanceResult &result);
     void handleStats(QObject *target, float minimum, float average, float maximum, int samples);
+    void handleDriveHealth(const DriveHealth &health);
     void localeSelected(QAction* act);
     void profileSelected(QAction* act);
     void modeSelected(QAction* act);

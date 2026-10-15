@@ -48,6 +48,24 @@ Every saved report is also appended to a JSON history, `~/.local/share/kdiskmark
 
 Besides the results, a report contains the minimum, average and maximum bandwidth over the loops of each test, an overall score and performance class, and drive and system information. The layout of the JSON is documented in `src/reportdata.h`; reports saved by older versions are still readable.
 
+## Drive health and performance figures
+A panel below the results shows three figures next to the overall score:
+
+| Figure | Meaning | Source |
+|---|---|---|
+| **Drive health** | Wear level reported by the drive itself, 100 % being a drive with no wear | SMART, through `smartctl` |
+| **Filesystem** | 100 % when the filesystem has recorded no errors | Btrfs and ext4 error counters from the kernel |
+| **Performance** | Your results compared with a mainstream NVMe SSD, 100 % being that reference (it can exceed 100 %) | The standard tests |
+
+<p align="center">
+   <img src="assets/images/health-panel.png" width="420"/>
+   <img src="assets/images/health-panel-unavailable.png" width="420"/>
+</p>
+
+*Rendered with sample results, not a real benchmark. Right: a virtual disk that has no SMART data.*
+
+Nothing is made up when data is missing: a drive that does not report a wear level (hard disks, many USB enclosures, virtual disks) shows no percentage, and the panel says why. The drive health and filesystem figures are also part of saved reports.
+
 ## Dependencies
 ### Required
 * GCC/Clang C++17 (or later)
@@ -58,6 +76,9 @@ Besides the results, a report contains the minimum, average and maximum bandwidt
     * `PolkitQt-1` bindings.
 * [Flexible I/O Tester](https://github.com/axboe/fio) with libaio >= 3.1
     * `libaio` development package.
+
+### Optional
+* [smartmontools](https://www.smartmontools.org/) (`smartctl`) for the drive health figure. Without it, or on drives that do not report SMART data, the figure is shown as unavailable.
 
 ### External libraries
 * [SingleApplication](https://github.com/itay-grudev/SingleApplication) prevents launch of multiple application instances.

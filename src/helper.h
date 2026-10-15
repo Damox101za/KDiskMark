@@ -31,6 +31,7 @@ public slots:
     Q_SCRIPTABLE QVariantMap stopCurrentTask();
     Q_SCRIPTABLE QVariantMap checkCowStatus(const QString &path);
     Q_SCRIPTABLE QVariantMap createNoCowDirectory(const QString &path);
+    Q_SCRIPTABLE QVariantMap getDriveHealth(const QString &device);
 
 signals:
     Q_SCRIPTABLE void taskFinished(bool, QString, QString);
@@ -63,6 +64,7 @@ public:
     QVariantMap stopCurrentTask();
     QVariantMap checkCowStatus(const QString &path);
     QVariantMap createNoCowDirectory(const QString &path);
+    QVariantMap getDriveHealth(const QString &device);
 
 private:
     bool isCallerAuthorized();
