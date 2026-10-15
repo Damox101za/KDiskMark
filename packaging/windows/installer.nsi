@@ -32,6 +32,11 @@ InstallDir "$PROGRAMFILES64\${APP_NAME}"
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Install"
+    ; All users' Start Menu and the 64 bit registry view: the installer runs elevated, possibly
+    ; as a different administrator than the person who will use the program.
+    SetShellVarContext all
+    SetRegView 64
+
     SetOutPath "$INSTDIR"
     File /r "${SOURCE_DIR}\*.*"
 
@@ -51,6 +56,9 @@ Section "Install"
 SectionEnd
 
 Section "Uninstall"
+    SetShellVarContext all
+    SetRegView 64
+
     ; Only delete a folder that really is an installation of this program
     IfFileExists "$INSTDIR\kdiskmark.exe" 0 +2
         RMDir /r "$INSTDIR"

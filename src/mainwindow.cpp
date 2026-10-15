@@ -203,6 +203,15 @@ MainWindow::MainWindow(QWidget *parent)
 
     setupInsightsPanel();
 
+#ifdef Q_OS_WIN
+    // Dropping the page cache and Copy-on-Write handling need the Linux helper
+    for (QAction *action : { ui->actionFlush_Pagecache, ui->actionCoW_detection }) {
+        action->setChecked(false);
+        action->setEnabled(false);
+        action->setToolTip(tr("Not available on Windows"));
+    }
+#endif
+
     updateProgressBarsStyle();
 
     updatePresetsSelection();

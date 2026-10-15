@@ -66,6 +66,11 @@ jobs:
       run: |
         $version = '3.43'
         Invoke-WebRequest "https://github.com/axboe/fio/releases/download/fio-$version/fio-$version-x64.msi" -OutFile fio.msi
+        # The binary ends up inside an installer people run as administrator: pin what is shipped.
+        # (Update this together with $version.)
+        $expected = '8299e6e6fbc024d3b74aa1ce62fb94ef6960b45629fbfa678b720834b6eb34aa'
+        $actual = (Get-FileHash fio.msi -Algorithm SHA256).Hash
+        if ($actual -ne $expected.ToUpper()) { throw "fio.msi has an unexpected SHA-256: $actual" }
         # an administrative install only extracts the files
         Start-Process msiexec.exe -Wait -ArgumentList '/a', 'fio.msi', '/qn', "TARGETDIR=$PWD\fio-extracted"
         $exe = Get-ChildItem fio-extracted -Recurse -Filter fio.exe | Select-Object -First 1
@@ -82,10 +87,6 @@ jobs:
       shell: pwsh
       run: |
         $env:PATH = "$PWD\third-party\fio;$env:PATH"
-        # the test that runs the real fio, verbosely and into a file, so a failure explains itself
-        & build\tests\Release\tst_localbackend.exe -v2 -o localbackend.log,txt
-        "exit code of tst_localbackend: $LASTEXITCODE"
-        if (Test-Path localbackend.log) { Get-Content localbackend.log } else { "no log file was written" }
         ctest --test-dir build -C Release --output-on-failure
 
     - name: Package

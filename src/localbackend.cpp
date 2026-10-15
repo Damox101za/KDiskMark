@@ -37,6 +37,16 @@ LocalBackend::~LocalBackend()
 
 QVariantMap LocalBackend::initSession()
 {
+    // A backend lives as long as the application, unlike the helper process, so every run starts
+    // from a clean state. Without this a file that could not be removed (locked, drive pulled)
+    // would make every later run fail with "a new session should be started".
+    stopProcess();
+
+    if (!m_benchmarkPath.isEmpty()) {
+        QFile::remove(m_benchmarkPath);
+        m_benchmarkPath.clear();
+    }
+
     return {{"success", true}};
 }
 
@@ -235,5 +245,5 @@ QVariantMap LocalBackend::stopCurrentTask()
 QVariantMap LocalBackend::getDriveHealth(const QString &)
 {
     return {{"success", true}, {"available", false},
-            {"error", tr("Drive health needs the privileged helper, which is not used here.")}};
+            {"error", tr("Drive health is not available on this platform.")}};
 }

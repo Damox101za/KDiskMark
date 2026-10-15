@@ -176,6 +176,10 @@ if(WIN32)
     target_sources(${PROJECT_NAME} PRIVATE src/kdiskmark.rc)
     # A windowed program, not a console one
     set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE ON)
+    if(USE_QT5)
+        # Qt 6 links its entry point automatically, Qt 5 needs it asked for
+        target_link_libraries(${PROJECT_NAME} PRIVATE Qt5::WinMain)
+    endif()
 endif()
 
 # The terminal interface and the helper client are Linux only

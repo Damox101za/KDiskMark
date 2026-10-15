@@ -6,6 +6,10 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#ifdef Q_OS_UNIX
+#include <unistd.h>
+#endif
+
 #include "localbackend.h"
 
 // Runs the real fio, so these tests are skipped when it is not installed.
@@ -122,6 +126,34 @@ private slots:
         backend.endSession();
         QCOMPARE(benchmarkFiles(dir.path()).size(), 0);
     }
+
+#ifdef Q_OS_UNIX
+    void aFailedRemovalDoesNotBlockTheNextRun()
+    {
+        // The application keeps one backend for its whole life, so a file that could not be
+        // removed must not make every later run fail.
+        if (geteuid() == 0) QSKIP("root ignores directory permissions");
+
+        QTemporaryDir dir;
+        LocalBackend backend;
+        QSignalSpy finished(&backend, &Backend::taskFinished);
+
+        QVERIFY(backend.prepareBenchmarkFile(dir.path(), 16, false).value("success").toBool());
+        QVERIFY(finished.wait(20000));
+
+        // a read-only directory: the file cannot be removed
+        QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+        QVERIFY(!backend.removeBenchmarkFile().value("success").toBool());
+        QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+
+        // the next run starts a new session and works
+        QVERIFY(backend.initSession().value("success").toBool());
+        QCOMPARE(benchmarkFiles(dir.path()).size(), 0);
+        finished.clear();
+        QVERIFY(backend.prepareBenchmarkFile(dir.path(), 16, false).value("success").toBool());
+        QVERIFY(finished.wait(20000));
+    }
+#endif
 
     void aMissingDirectoryIsAnError()
     {
