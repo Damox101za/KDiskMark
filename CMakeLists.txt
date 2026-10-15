@@ -14,6 +14,7 @@ include_directories(${PROJECT_BINARY_BIN})
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 option(USE_QT5 "Use Qt5 instead of Qt6" OFF)
+option(BUILD_TESTS "Build the unit tests (run them with ctest)" OFF)
 
 if(USE_QT5)
     find_package(Qt5 COMPONENTS Widgets LinguistTools DBus REQUIRED)
@@ -182,3 +183,8 @@ ecm_install_configured_files(
     INPUT data/dev.jonmagon.kdiskmark.helperinterface.service.in
     DESTINATION ${KDE_INSTALL_DBUSDIR}/system-services
 )
+
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
