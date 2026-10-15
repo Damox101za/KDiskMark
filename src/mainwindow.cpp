@@ -142,6 +142,11 @@ MainWindow::MainWindow(QWidget *parent)
     ui->actionTheme_Stylesheet_Dark->setActionGroup(themeGroup);
     ui->actionTheme_Do_not_apply->setActionGroup(themeGroup);
 
+    QAction *neonThemeAction = new QAction(tr("Neon Dark"), this);
+    neonThemeAction->setCheckable(true);
+    neonThemeAction->setProperty("theme", Global::Theme::StyleSheetNeon);
+    neonThemeAction->setActionGroup(themeGroup);
+    ui->menuTheme->insertAction(ui->actionTheme_Use_Fusion, neonThemeAction);
     connect(themeGroup, SIGNAL(triggered(QAction*)), this, SLOT(themeSelected(QAction*)));
 
     m_progressBars << ui->readBar_1 << ui->writeBar_1 << ui->mixBar_1
@@ -186,6 +191,15 @@ MainWindow::MainWindow(QWidget *parent)
     ui->actionTheme_Stylesheet_Light->setChecked(settings.getTheme() == Global::Theme::StyleSheetLight);
     ui->actionTheme_Stylesheet_Dark->setChecked(settings.getTheme() ==Global::Theme::StyleSheetDark);
     ui->actionTheme_Do_not_apply->setChecked(settings.getTheme() == Global::Theme::DoNotApply);
+    ui->actionTheme_Use_Fusion->setChecked(settings.getTheme() == Global::Theme::UseFusion);
+    neonThemeAction->setChecked(settings.getTheme() == Global::Theme::StyleSheetNeon);
+
+    // Lets the Neon style colour read, write and mix bars differently.
+    for (QProgressBar *progressBar : m_progressBars) {
+        const QString name = progressBar->objectName();
+        progressBar->setProperty("kdmKind", name.startsWith(QLatin1String("read")) ? "read"
+                                          : name.startsWith(QLatin1String("write")) ? "write" : "mix");
+    }
 
     setupInsightsPanel();
 
@@ -1009,6 +1023,7 @@ void MainWindow::presetSelected(QAction* act)
     updateBenchmarkButtonsContent();
 }
 
+
 void MainWindow::updateProgressBarsStyle()
 {
     QStyle *progressBarStyleFusion = QStyleFactory::create(QStringLiteral("Fusion"));
@@ -1034,8 +1049,56 @@ void MainWindow::updateProgressBarsStyle()
             progressBar->setStyle(progressBarStyleDefault);
             progressBar->setStyleSheet(QStringLiteral());
             break;
+        case Global::Theme::StyleSheetNeon:
+            // Styled by the window style sheet, see applyThemeStyleSheet()
+            progressBar->setStyle(progressBarStyleDefault);
+            progressBar->setStyleSheet(QStringLiteral());
+            break;
         }
     }
+
+    applyThemeStyleSheet();
+}
+
+void MainWindow::applyThemeStyleSheet()
+{
+    if (AppSettings().getTheme() != Global::Theme::StyleSheetNeon) {
+        setStyleSheet(QString());
+        return;
+    }
+
+    setStyleSheet(QStringLiteral(R"(
+        QMainWindow, QWidget#centralwidget, QWidget#page, QWidget#page_2,
+        QWidget#readWidget, QWidget#writeWidget, QWidget#mixWidget { background: #0a0e1a; }
+        QWidget { color: #d6f6ff; }
+        QLabel { color: #7fd8f0; background: transparent; }
+        QMenuBar { background: #0a0e1a; color: #d6f6ff; }
+        QMenuBar::item:selected { background: #15324d; }
+        QMenu { background: #0f1626; color: #d6f6ff; border: 1px solid #1f4a6e; }
+        QMenu::item:selected { background: #0f5a80; }
+        QMenu::separator { height: 1px; background: #1f3a5a; }
+        QPushButton { background: #0f1830; border: 1px solid #1d6f93; border-radius: 9px;
+                      color: #9be9ff; font-weight: bold; padding: 4px; }
+        QPushButton:hover { border: 1px solid #00e5ff; background: #12254a; color: #ffffff; }
+        QPushButton:pressed { background: #08405c; }
+        QPushButton:disabled { border: 1px solid #1a2a40; color: #3d5a73; }
+        QComboBox, QSpinBox, QLineEdit { background: #0f1830; border: 1px solid #1f3f63;
+                      border-radius: 7px; color: #d6f6ff; padding: 2px 6px; selection-background-color: #0f5a80; }
+        QComboBox:hover, QSpinBox:hover { border: 1px solid #00b4d8; }
+        QComboBox QAbstractItemView { background: #0f1626; color: #d6f6ff;
+                      selection-background-color: #0f5a80; border: 1px solid #1f4a6e; }
+        QProgressBar { background: #0f1626; border: 1px solid #1f3f63; border-radius: 9px;
+                       color: #ffffff; text-align: center; }
+        QProgressBar::chunk { border-radius: 8px; }
+        QProgressBar[kdmKind="read"]::chunk  { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #0072ff, stop:1 #00f0d0); }
+        QProgressBar[kdmKind="write"]::chunk { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #b400ff, stop:1 #ff3d9a); }
+        QProgressBar[kdmKind="mix"]::chunk   { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #ff8a00, stop:1 #ffd400); }
+        QToolTip { background: #0f1626; color: #d6f6ff; border: 1px solid #00b4d8; }
+        QFrame#insightsPanel { background: #0d1424; border: 1px solid #1f4a6e; border-radius: 12px; }
+        QLabel#healthTitle { color: #00e5ff; font-weight: bold; letter-spacing: 1px; }
+        QLabel#scoreValue { color: #00f0d0; font-size: 30px; font-weight: bold; }
+        QLabel#scoreRating { color: #ff3d9a; font-weight: bold; }
+    )"));
 }
 
 void MainWindow::themeSelected(QAction* act)

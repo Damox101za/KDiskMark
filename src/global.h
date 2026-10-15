@@ -80,6 +80,7 @@ namespace Global
         StyleSheetLight,
         StyleSheetDark,
         DoNotApply,
+        StyleSheetNeon, // appended after DoNotApply to keep saved settings valid
     };
 
     struct Storage

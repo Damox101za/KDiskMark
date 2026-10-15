@@ -81,6 +81,7 @@ private:
     void setupInsightsPanel();
     void updateInsightsPanel();
     FilesystemHealth currentFilesystemHealth() const;
+    void applyThemeStyleSheet();
 
     void updateFileSizeList();
     void updateStoragesList();
