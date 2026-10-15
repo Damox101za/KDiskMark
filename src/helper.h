@@ -8,6 +8,7 @@
 
 class Helper;
 class QDBusServiceWatcher;
+class QSocketNotifier;
 
 class HelperAdaptor : public QDBusAbstractAdaptor
 {
@@ -45,6 +46,9 @@ class Helper : public QObject, public QDBusContext
 public:
     Helper();
 
+    // Terminating signals (SIGTERM, SIGINT, SIGHUP) end the helper through shutdown().
+    void installSignalHandlers();
+
 public:
     QVariantMap initSession();
     QVariantMap endSession();
@@ -64,6 +68,8 @@ private:
     bool isCallerAuthorized();
     bool resolveDirectory(const QString &path, QString *resolved, QString *error);
     bool startFio(const QStringList &arguments);
+    void stopProcess();
+    void shutdown();
 
 signals:
     void taskFinished(bool, QString, QString);
@@ -72,6 +78,7 @@ private:
     HelperAdaptor *m_helperAdaptor;
     QDBusServiceWatcher *m_serviceWatcher = nullptr;
     bool m_authInProgress = false;
+    QSocketNotifier *m_signalNotifier = nullptr;
 
     QProcess *m_process = nullptr;
     QTemporaryFile m_benchmarkFile;
