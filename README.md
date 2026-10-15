@@ -57,6 +57,13 @@ A panel below the results shows three figures next to the overall score:
 | **Filesystem** | 100 % when the filesystem has recorded no errors | Btrfs and ext4 error counters from the kernel |
 | **Performance** | Your results compared with a mainstream NVMe SSD, 100 % being that reference (it can exceed 100 %) | The standard tests |
 
+<p align="center">
+   <img src="assets/images/health-panel.png" width="420"/>
+   <img src="assets/images/health-panel-unavailable.png" width="420"/>
+</p>
+
+*Rendered with sample results, not a real benchmark. Right: a virtual disk that has no SMART data.*
+
 Nothing is made up when data is missing: a drive that does not report a wear level (hard disks, many USB enclosures, virtual disks) shows no percentage, and the panel says why. The drive health and filesystem figures are also part of saved reports.
 
 ## Dependencies
