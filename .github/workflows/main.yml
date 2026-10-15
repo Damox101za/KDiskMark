@@ -33,7 +33,7 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install qttools5-dev libpolkit-qt5-1-dev extra-cmake-modules
+        sudo apt-get install qttools5-dev libpolkit-qt5-1-dev extra-cmake-modules fio
 
     - name: Build
       run: |
@@ -46,3 +46,75 @@ jobs:
       run: |
         cd build
         ctest --output-on-failure
+
+  Windows:
+    runs-on: windows-latest
+    steps:
+    - name: Clone repo
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '6.8.*'
+        cache: true
+
+    - name: Get fio (official Windows build)
+      shell: pwsh
+      run: |
+        $version = '3.43'
+        Invoke-WebRequest "https://github.com/axboe/fio/releases/download/fio-$version/fio-$version-x64.msi" -OutFile fio.msi
+        # The binary ends up inside an installer people run as administrator: pin what is shipped.
+        # (Update this together with $version.)
+        $expected = '8299e6e6fbc024d3b74aa1ce62fb94ef6960b45629fbfa678b720834b6eb34aa'
+        $actual = (Get-FileHash fio.msi -Algorithm SHA256).Hash
+        if ($actual -ne $expected.ToUpper()) { throw "fio.msi has an unexpected SHA-256: $actual" }
+        # an administrative install only extracts the files
+        Start-Process msiexec.exe -Wait -ArgumentList '/a', 'fio.msi', '/qn', "TARGETDIR=$PWD\fio-extracted"
+        $exe = Get-ChildItem fio-extracted -Recurse -Filter fio.exe | Select-Object -First 1
+        New-Item -ItemType Directory third-party\fio -Force | Out-Null
+        Copy-Item "$($exe.DirectoryName)\*" third-party\fio -Recurse
+        Get-ChildItem third-party\fio | Select-Object Name, Length
+
+    - name: Build
+      run: |
+        cmake -S . -B build -DBUILD_TESTS=ON
+        cmake --build build --config Release --parallel 2
+
+    - name: Test
+      shell: pwsh
+      run: |
+        $env:PATH = "$PWD\third-party\fio;$env:PATH"
+        ctest --test-dir build -C Release --output-on-failure
+
+    - name: Package
+      shell: pwsh
+      run: |
+        cmake --install build --config Release --prefix dist
+        windeployqt --release dist\kdiskmark.exe
+        Get-ChildItem dist | Select-Object Name
+
+    - name: Upload the Windows build
+      uses: actions/upload-artifact@v4
+      with:
+        name: kdiskmark-windows
+        path: dist
+
+    - name: Installer
+      shell: pwsh
+      run: |
+        $version = (Select-String -Path CMakeLists.txt -Pattern 'project\(kdiskmark VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+        # NSIS is not part of the runner image
+        choco install nsis --no-progress -y | Out-Null
+        $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
+        if (-not (Test-Path $makensis)) { throw "makensis was not installed" }
+        & $makensis "/DVERSION=$version" "/DSOURCE_DIR=$PWD\dist" "/DOUTFILE=$PWD\KDiskMark-$version-Setup.exe" packaging\windows\installer.nsi
+        Get-Item "KDiskMark-$version-Setup.exe" | Select-Object Name, Length
+
+    - name: Upload the installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: kdiskmark-windows-installer
+        path: KDiskMark-*-Setup.exe

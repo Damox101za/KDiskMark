@@ -43,9 +43,15 @@ QString DiskDriveInfo::getModelName(const QString &volume)
     QString model(arg.value.str);
 
     close(fd);
+#else
+    // No way to read the model name on this platform yet
+    Q_UNUSED(volume)
+    return QString();
 #endif
 
+#if defined(__linux__) || defined(__FreeBSD__)
     return model;
+#endif
 }
 
 

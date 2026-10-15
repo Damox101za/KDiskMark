@@ -2,18 +2,25 @@
 
 #include "global.h"
 
+#include <QDir>
+#include <QEventLoop>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QStorageInfo>
-#include <QDBusPendingCallWatcher>
-#include <QDBusPendingReply>
+#include <QTimer>
 
-#include "helper_interface.h"
+#include "backend.h"
 
 Benchmark::Benchmark()
 {
     m_running = false;
+    m_helperAuthorized = false;
+
+    m_backend = Backend::create(this);
 
     QProcess process;
-    process.start("fio", {"--version"});
+    process.start(Backend::fioProgram(), {"--version"});
     process.waitForFinished();
 
     m_FIOVersion = process.readAllStandardOutput().simplified();
@@ -57,88 +64,74 @@ void Benchmark::startTest(int blockSize, int queueDepth, int threads, const QStr
 
         emit benchmarkStatusUpdate(statusMessage.arg(index + 1).arg(settings.getLoopsCount()));
 
-        auto interface = helperInterface();
-        if (!interface) {
-            setRunning(false);
-            emit failed("Helper inteface is null.");
-            return;
-        }
-
         if (settings.getFlusingCacheState()) {
-            handleDbusPendingCall(interface->flushPageCache());
+            handleReply(m_backend->flushPageCache());
         }
 
         if (!isRunning()) return;
 
-        handleDbusPendingCall(interface->startBenchmarkTest(settings.getMeasuringTime(),
-                                                            settings.getFileSize(),
-                                                            settings.getRandomReadPercentage(),
-                                                            settings.getBenchmarkTestData() == Global::BenchmarkTestData::Zeros,
-                                                            settings.getCacheBypassState(),
-                                                            settings.getContinuousGenerationState(),
-                                                            blockSize, queueDepth, threads, rw));
+        bool success = false;
+        QString output, errorOutput;
 
-        if (!isRunning()) return;
+        const bool started = runTask([&]() {
+            return m_backend->startBenchmarkTest(settings.getMeasuringTime(),
+                                                 settings.getFileSize(),
+                                                 settings.getRandomReadPercentage(),
+                                                 settings.getBenchmarkTestData() == Global::BenchmarkTestData::Zeros,
+                                                 settings.getCacheBypassState(),
+                                                 settings.getContinuousGenerationState(),
+                                                 blockSize, queueDepth, threads, rw);
+        }, &success, &output, &errorOutput);
 
-        QEventLoop loop;
+        if (!started || !isRunning()) return;
 
-        auto exitLoop = [&] (bool success, QString output, QString errorOutput) {
-            loop.exit();
+        if (!success) {
+            setRunning(false);
+        }
 
-            if (!success) {
-                setRunning(false);
-            }
+        if (m_running) {
+            index++;
 
-            if (m_running) {
-                index++;
-
-                auto result = parseResult(output, errorOutput);
-
-                if (rw.contains("read")) {
-                    samples << result.read.Bandwidth;
-                }
-                else if (rw.contains("write")) {
-                    samples << result.write.Bandwidth;
-                }
-                else {
-                    const float p = settings.getRandomReadPercentage();
-                    samples << (result.read.Bandwidth * p + result.write.Bandwidth * (100.f - p)) / 100.f;
-                }
-
-                switch (settings.getPerformanceProfile())
-                {
-                    case Global::PerformanceProfile::Default:
-                        totalRead  += result.read;
-                        totalWrite += result.write;
-                    break;
-                    case Global::PerformanceProfile::Peak:
-                    case Global::PerformanceProfile::RealWorld:
-                    case Global::PerformanceProfile::Demo:
-                        totalRead.updateWithBetterValues(result.read);
-                        totalWrite.updateWithBetterValues(result.write);
-                    break;
-                }
-            }
+            auto result = parseResult(output, errorOutput);
 
             if (rw.contains("read")) {
-                sendResult(totalRead, index);
+                samples << result.read.Bandwidth;
             }
             else if (rw.contains("write")) {
-                sendResult(totalWrite, index);
+                samples << result.write.Bandwidth;
             }
-            else if (rw.contains("rw")) {
-                float p = settings.getRandomReadPercentage();
-                sendResult((totalRead * p + totalWrite * (100.f - p)) / 100.f, index);
+            else {
+                const float p = settings.getRandomReadPercentage();
+                samples << (result.read.Bandwidth * p + result.write.Bandwidth * (100.f - p)) / 100.f;
             }
 
-            sendStats(samples);
-        };
+            switch (settings.getPerformanceProfile())
+            {
+                case Global::PerformanceProfile::Default:
+                    totalRead  += result.read;
+                    totalWrite += result.write;
+                break;
+                case Global::PerformanceProfile::Peak:
+                case Global::PerformanceProfile::RealWorld:
+                case Global::PerformanceProfile::Demo:
+                    totalRead.updateWithBetterValues(result.read);
+                    totalWrite.updateWithBetterValues(result.write);
+                break;
+            }
+        }
 
-        auto conn = QObject::connect(interface, &DevJonmagonKdiskmarkHelperInterface::taskFinished, exitLoop);
+        if (rw.contains("read")) {
+            sendResult(totalRead, index);
+        }
+        else if (rw.contains("write")) {
+            sendResult(totalWrite, index);
+        }
+        else if (rw.contains("rw")) {
+            float p = settings.getRandomReadPercentage();
+            sendResult((totalRead * p + totalWrite * (100.f - p)) / 100.f, index);
+        }
 
-        loop.exec();
-
-        QObject::disconnect(conn);
+        sendStats(samples);
     }
 }
 
@@ -181,23 +174,15 @@ void Benchmark::fetchDriveHealth()
     DriveHealth health = DriveHealth::unavailable(tr("Drive health is not available."), device);
 
     // Health is extra information, so any failure here must never stop the benchmark.
-    if (auto interface = helperInterface()) {
-        QDBusPendingCall pcall = interface->getDriveHealth(device);
-        QDBusPendingCallWatcher watcher(pcall);
-        QEventLoop loop;
-        connect(&watcher, &QDBusPendingCallWatcher::finished, &loop, &QEventLoop::quit);
-        if (!watcher.isFinished()) loop.exec();
+    const QVariantMap content = m_backend->getDriveHealth(device);
 
-        QDBusPendingReply<QVariantMap> reply = pcall;
-        if (!reply.isError()) {
-            const QVariantMap content = reply.value();
-            if (content.value(QStringLiteral("available")).toBool()) {
-                health = DriveHealth::fromSmartctlJson(content.value(QStringLiteral("json")).toByteArray(), device);
-            }
-            else {
-                const QString error = content.value(QStringLiteral("error")).toString();
-                if (!error.isEmpty()) health = DriveHealth::unavailable(error, device);
-            }
+    if (content.value(QStringLiteral("success")).toBool()) {
+        if (content.value(QStringLiteral("available")).toBool()) {
+            health = DriveHealth::fromSmartctlJson(content.value(QStringLiteral("json")).toByteArray(), device);
+        }
+        else {
+            const QString error = content.value(QStringLiteral("error")).toString();
+            if (!error.isEmpty()) health = DriveHealth::unavailable(error, device);
         }
     }
 
@@ -206,7 +191,7 @@ void Benchmark::fetchDriveHealth()
 
 Benchmark::ParsedJob Benchmark::parseResult(const QString &output, const QString &errorOutput)
 {
-    QJsonDocument jsonResponse = QJsonDocument::fromJson(output.toUtf8());
+    QJsonDocument jsonResponse = QJsonDocument::fromJson(Backend::jsonFromOutput(output));
     QJsonObject jsonObject = jsonResponse.object();
     QJsonArray jobs = jsonObject["jobs"].toArray();
 
@@ -251,8 +236,7 @@ void Benchmark::setRunning(bool state)
     m_running = state;
 
     if (!m_running && m_helperAuthorized) {
-        auto interface = helperInterface();
-        if (interface) handleDbusPendingCall(interface->stopCurrentTask());
+        m_backend->stopCurrentTask();
     }
 
     emit runningStateChanged(state);
@@ -354,54 +338,32 @@ void Benchmark::runBenchmark(QList<QPair<QPair<Global::BenchmarkTest, Global::Be
         }
     }
 
-    auto interface = helperInterface();
-    if (interface) handleDbusPendingCall(interface->removeBenchmarkFile());
+    handleReply(m_backend->removeBenchmarkFile());
 
     setRunning(false);
 
     // Turn off the helper, otherwise it will not be able to perform another test
-    // Just sending a message without waiting for a response
-    if (interface) interface->endSession();
+    m_backend->endSession();
 
     emit finished(); // Only needed when closing the app during a running benchmarking
-}
-
-DevJonmagonKdiskmarkHelperInterface* Benchmark::helperInterface()
-{
-    if (!QDBusConnection::systemBus().isConnected()) {
-        emit failed(QDBusConnection::systemBus().lastError().message());
-        return nullptr;
-    }
-
-    auto *interface = new dev::jonmagon::kdiskmark::helper(QStringLiteral("dev.jonmagon.kdiskmark.helperinterface"),
-                QStringLiteral("/Helper"), QDBusConnection::systemBus(), this);
-    interface->setTimeout(10 * 24 * 3600 * 1000); // 10 days
-
-    return interface;
 }
 
 void Benchmark::initSession()
 {
     m_helperAuthorized = false;
 
-    auto interface = helperInterface();
-    if (interface) handleDbusPendingCall(interface->initSession());
+    handleReply(m_backend->initSession());
 
-    // Process was not stopped by handleDbusPendingCall, consider that the authorization was successful
+    // Process was not stopped by handleReply, consider that the authorization was successful
     if (isRunning()) m_helperAuthorized = true;
 }
 
 void Benchmark::prepareDirectory(const QString &benchmarkFile)
 {
-    auto interface = helperInterface();
-    if (!interface) return;
+    QVariantMap reply = m_backend->checkCowStatus(benchmarkFile);
+    if (!handleReply(reply)) return;
 
-    QDBusPendingCall pcall = interface->checkCowStatus(benchmarkFile);
-    handleDbusPendingCall(pcall);
-    if (!isRunning()) return;
-
-    QDBusPendingReply<QVariantMap> reply = pcall;
-    if (reply.value()["hasCow"].toBool()) {
+    if (reply.value(QStringLiteral("hasCow")).toBool()) {
         bool createNoCowDir = false;
         auto callback = [&createNoCowDir](bool create) {
             createNoCowDir = create;
@@ -412,12 +374,10 @@ void Benchmark::prepareDirectory(const QString &benchmarkFile)
         QObject::disconnect(conn);
 
         if (createNoCowDir) {
-            pcall = interface->createNoCowDirectory(benchmarkFile);
-            handleDbusPendingCall(pcall);
-            if (!isRunning()) return;
+            reply = m_backend->createNoCowDirectory(benchmarkFile);
+            if (!handleReply(reply)) return;
 
-            reply = pcall;
-            this->setDir(reply.value()["path"].toString());
+            this->setDir(reply.value(QStringLiteral("path")).toString());
             emit directoryChanged(this->getBenchmarkFile());
         }
     }
@@ -425,64 +385,83 @@ void Benchmark::prepareDirectory(const QString &benchmarkFile)
 
 void Benchmark::prepareFile(const QString &benchmarkFile, int fileSize)
 {
-    auto interface = helperInterface();
-    if (!interface) return;
+    bool success = false;
+    QString output, errorOutput;
 
-    handleDbusPendingCall(interface->prepareBenchmarkFile(benchmarkFile, fileSize, AppSettings().getBenchmarkTestData() == Global::BenchmarkTestData::Zeros));
-
-    if (!isRunning()) return;
-
-    QEventLoop loop;
-
-    auto exitLoop = [&] (bool success, QString output, QString errorOutput) {
-        loop.exit();
-
-        if (!isRunning()) return;
-
-        if (!success) {
-            setRunning(false);
-            emit failed(!errorOutput.isEmpty() ? errorOutput : "The benchmark file could not be prepared.");
-        }
-
-        parseResult(output, errorOutput);
-    };
-
-    auto conn = QObject::connect(interface, &DevJonmagonKdiskmarkHelperInterface::taskFinished, exitLoop);
-
-    loop.exec();
-
-    QObject::disconnect(conn);
-}
-
-void Benchmark::handleDbusPendingCall(QDBusPendingCall pcall)
-{
-    QDBusPendingCallWatcher *watcher = new QDBusPendingCallWatcher(pcall, this);
-    QEventLoop loop;
-    connect(watcher, &QDBusPendingCallWatcher::finished, [&] (QDBusPendingCallWatcher *watcher) {
-        loop.exit();
-
-        if (!isRunning()) return;
-
-        if (watcher->isError()) {
-            setRunning(false);
-            if (watcher->error().type() == QDBusError::AccessDenied) {
-                emit failed(tr("Could not obtain administrator privileges."));
-            }
-            else {
-                emit failed(!watcher->error().message().isEmpty() ? watcher->error().message() : watcher->error().name());
-            }
-        }
-        else {
-            QDBusPendingReply<QVariantMap> reply = *watcher;
-
-            QVariantMap replyContent = reply.value();
-            if (!replyContent[QStringLiteral("success")].toBool()) {
-                setRunning(false);
-                QString error = replyContent[QStringLiteral("error")].toString();
-                emit failed(!error.isEmpty() ? error : "An error has occurred when executing a DBus task.");
-            }
+    // Writing the file can take a minute on a slow drive (it has to be real data, otherwise
+    // reads would be answered with zeros), so show how far it is.
+    QTimer progress;
+    progress.setInterval(500);
+    connect(&progress, &QTimer::timeout, this, [&]() {
+        const QFileInfoList files = QDir(benchmarkFile).entryInfoList({ QStringLiteral("kdiskmark-*.tmp") },
+                                                                      QDir::Files, QDir::Time);
+        if (!files.isEmpty()) {
+            emit benchmarkStatusUpdate(tr("Preparing: writing the test file (%1 of %2 MiB)")
+                                       .arg(files.first().size() / (1024 * 1024)).arg(fileSize));
         }
     });
+    progress.start();
 
-    loop.exec();
+    const bool started = runTask([&]() {
+        return m_backend->prepareBenchmarkFile(benchmarkFile, fileSize,
+                                               AppSettings().getBenchmarkTestData() == Global::BenchmarkTestData::Zeros);
+    }, &success, &output, &errorOutput);
+
+    progress.stop();
+
+    if (!started || !isRunning()) return;
+
+    if (!success) {
+        setRunning(false);
+        emit failed(!errorOutput.isEmpty() ? errorOutput : "The benchmark file could not be prepared.");
+    }
+
+    parseResult(output, errorOutput);
+}
+
+bool Benchmark::handleReply(const QVariantMap &reply)
+{
+    if (!isRunning()) return false;
+
+    if (!reply.value(QStringLiteral("success")).toBool()) {
+        setRunning(false);
+
+        if (reply.value(QStringLiteral("accessDenied")).toBool()) {
+            emit failed(tr("Could not obtain administrator privileges."));
+        }
+        else {
+            const QString error = reply.value(QStringLiteral("error")).toString();
+            emit failed(!error.isEmpty() ? error : "An error has occurred when executing a task.");
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
+bool Benchmark::runTask(const std::function<QVariantMap()> &start, bool *success, QString *output, QString *errorOutput)
+{
+    bool finished = false;
+    QEventLoop loop;
+
+    // Connected before the task starts so a task that finishes at once is not missed
+    auto conn = connect(m_backend, &Backend::taskFinished,
+                        [&](bool ok, const QString &out, const QString &err) {
+        *success = ok;
+        *output = out;
+        *errorOutput = err;
+        finished = true;
+        loop.quit();
+    });
+
+    const bool started = handleReply(start());
+
+    if (started && !finished) {
+        loop.exec();
+    }
+
+    QObject::disconnect(conn);
+
+    return started;
 }

@@ -6,8 +6,11 @@
 
 #include "singleapplication.h"
 #include "cmake.h"
+#ifndef Q_OS_WIN
 #include "tui.h"
+#endif
 
+#ifndef Q_OS_WIN
 static bool isOptionPassed(int argc, char *argv[], const char *option)
 {
     for (int i = 1; i < argc; i++) {
@@ -17,7 +20,9 @@ static bool isOptionPassed(int argc, char *argv[], const char *option)
 
     return false;
 }
+#endif
 
+#ifndef Q_OS_WIN
 // QApplication requires a graphical display. With --tui, --help, --version or
 // without a display, the terminal interface is started over QCoreApplication.
 static bool isTerminalRequested(int argc, char *argv[])
@@ -29,6 +34,7 @@ static bool isTerminalRequested(int argc, char *argv[])
 
     return false;
 }
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -36,8 +42,9 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationVersion(QStringLiteral("%1.%2.%3").arg(PROJECT_VERSION_MAJOR)
                                             .arg(PROJECT_VERSION_MINOR).arg(PROJECT_VERSION_PATCH));
     QCoreApplication::setOrganizationName(QStringLiteral(PROJECT_NAME));
-    QGuiApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral(PROJECT_NAME)));
+    QGuiApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral(PROJECT_NAME), QIcon(QStringLiteral(":/kdiskmark.png"))));
 
+#ifndef Q_OS_WIN
     const bool noDisplay = qEnvironmentVariableIsEmpty("DISPLAY")
                         && qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY");
 
@@ -47,6 +54,7 @@ int main(int argc, char *argv[])
         Tui tui;
         return tui.run(app);
     }
+#endif
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);

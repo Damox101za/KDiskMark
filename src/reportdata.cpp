@@ -7,11 +7,17 @@
 #include <QJsonDocument>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QSettings>
 #include <QSysInfo>
 #include <QThread>
 #include <QtMath>
 
 #include <cmath>
+
+#ifdef Q_OS_WIN
+#define NOMINMAX
+#include <windows.h>
+#endif
 #include <QStringList>
 
 namespace
@@ -215,6 +221,18 @@ namespace ReportData
             }
         }
 
+#ifdef Q_OS_WIN
+        // There is no /proc on Windows
+        cpu = QSettings(QStringLiteral("HKEY_LOCAL_MACHINE\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0"),
+                        QSettings::NativeFormat).value(QStringLiteral("ProcessorNameString")).toString().simplified();
+
+        MEMORYSTATUSEX memory;
+        memory.dwLength = sizeof(memory);
+        if (GlobalMemoryStatusEx(&memory)) {
+            ramMiB = static_cast<qint64>(memory.ullTotalPhys / (1024 * 1024));
+        }
+#endif
+
         return {
             { QStringLiteral("os"), QStringLiteral("%1 %2").arg(QSysInfo::productType(), QSysInfo::productVersion()) },
             { QStringLiteral("kernel"), QStringLiteral("%1 %2").arg(QSysInfo::kernelType(), QSysInfo::kernelVersion()) },
@@ -417,10 +435,12 @@ namespace ReportData
 
         const QJsonObject system = report.value(QStringLiteral("system")).toObject();
         if (!system.isEmpty()) {
-            out << QString() << QStringLiteral("[System]")
-                << QStringLiteral("  CPU: %1 (%2 threads)").arg(system.value(QStringLiteral("cpu")).toString())
-                                                           .arg(system.value(QStringLiteral("cpu_threads")).toInt())
-                << QStringLiteral("  RAM: %1 MiB").arg(static_cast<qint64>(system.value(QStringLiteral("ram_mib")).toDouble()));
+            out << QString() << QStringLiteral("[System]");
+            if (!system.value(QStringLiteral("cpu")).toString().isEmpty())
+                out << QStringLiteral("  CPU: %1 (%2 threads)").arg(system.value(QStringLiteral("cpu")).toString())
+                                                               .arg(system.value(QStringLiteral("cpu_threads")).toInt());
+            if (system.value(QStringLiteral("ram_mib")).toDouble() > 0)
+                out << QStringLiteral("  RAM: %1 MiB").arg(static_cast<qint64>(system.value(QStringLiteral("ram_mib")).toDouble()));
         }
 
         return out.join(QLatin1Char('\n'));

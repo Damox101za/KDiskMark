@@ -203,6 +203,15 @@ MainWindow::MainWindow(QWidget *parent)
 
     setupInsightsPanel();
 
+#ifdef Q_OS_WIN
+    // Dropping the page cache and Copy-on-Write handling need the Linux helper
+    for (QAction *action : { ui->actionFlush_Pagecache, ui->actionCoW_detection }) {
+        action->setChecked(false);
+        action->setEnabled(false);
+        action->setToolTip(tr("Not available on Windows"));
+    }
+#endif
+
     updateProgressBarsStyle();
 
     updatePresetsSelection();
@@ -325,7 +334,13 @@ void MainWindow::updateStoragesList()
 
     foreach (const QStorageInfo &volume, QStorageInfo::mountedVolumes()) {
         if (volume.isValid() && volume.isReady() && !volume.isReadOnly()) {
-            if (volume.device().indexOf("/dev") != -1) {
+#ifdef Q_OS_WIN
+            // Windows volumes are drive letters, there is no /dev path to look for
+            const bool isStorage = true;
+#else
+            const bool isStorage = volume.device().indexOf("/dev") != -1;
+#endif
+            if (isStorage) {
                 Global::Storage storage {
                     .path = volume.rootPath(),
                     .bytesTotal = volume.bytesTotal(),
