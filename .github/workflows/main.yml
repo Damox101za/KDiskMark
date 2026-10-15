@@ -82,6 +82,8 @@ jobs:
       shell: pwsh
       run: |
         $env:PATH = "$PWD\third-party\fio;$env:PATH"
+        # the test that runs the real fio, verbosely, so a failure explains itself in the log
+        & build\tests\Release\tst_localbackend.exe -v2
         ctest --test-dir build -C Release --output-on-failure
 
     - name: Package
