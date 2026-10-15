@@ -325,7 +325,13 @@ void MainWindow::updateStoragesList()
 
     foreach (const QStorageInfo &volume, QStorageInfo::mountedVolumes()) {
         if (volume.isValid() && volume.isReady() && !volume.isReadOnly()) {
-            if (volume.device().indexOf("/dev") != -1) {
+#ifdef Q_OS_WIN
+            // Windows volumes are drive letters, there is no /dev path to look for
+            const bool isStorage = true;
+#else
+            const bool isStorage = volume.device().indexOf("/dev") != -1;
+#endif
+            if (isStorage) {
                 Global::Storage storage {
                     .path = volume.rootPath(),
                     .bytesTotal = volume.bytesTotal(),

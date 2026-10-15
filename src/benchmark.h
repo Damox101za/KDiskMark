@@ -6,13 +6,13 @@
 #include <QString>
 #include <QObject>
 
+#include <functional>
 #include <memory>
 
 #include "appsettings.h"
 #include "drivehealth.h"
 
-class QDBusPendingCall;
-class DevJonmagonKdiskmarkHelperInterface;
+class Backend;
 
 class Benchmark : public QObject
 {
@@ -87,7 +87,7 @@ private:
     QVector<QObject*> m_targets;
     QString m_dir;
 
-    DevJonmagonKdiskmarkHelperInterface* helperInterface();
+    Backend *m_backend = nullptr;
 
 private:
     void startTest(int blockSize, int queueDepth, int threads, const QString &rw, const QString &statusMessage);
@@ -100,7 +100,10 @@ private:
     void prepareDirectory(const QString &benchmarkFile);
     void prepareFile(const QString &benchmarkFile, int fileSize);
 
-    void handleDbusPendingCall(QDBusPendingCall pcall);
+    // Reports a failed reply of the backend. True when the call succeeded and the run goes on.
+    bool handleReply(const QVariantMap &reply);
+    // Starts a task, waits for its taskFinished and returns whether it could be started.
+    bool runTask(const std::function<QVariantMap()> &start, bool *success, QString *output, QString *errorOutput);
 
 signals:
     void benchmarkStatusUpdate(const QString &name);
