@@ -36,7 +36,8 @@ namespace Global
         int Queues;
         int Threads;
 
-        bool operator==(const BenchmarkParams& rhs)
+        // const: in C++20 a non-const operator== makes comparisons ambiguous (MSVC rejects them)
+        bool operator==(const BenchmarkParams& rhs) const
         {
             return this->Pattern == rhs.Pattern && this->BlockSize == rhs.BlockSize &&
                    this->Queues  == rhs.Queues  && this->Threads   == rhs.Threads;
