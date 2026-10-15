@@ -82,8 +82,10 @@ jobs:
       shell: pwsh
       run: |
         $env:PATH = "$PWD\third-party\fio;$env:PATH"
-        # the test that runs the real fio, verbosely, so a failure explains itself in the log
-        & build\tests\Release\tst_localbackend.exe -v2
+        # the test that runs the real fio, verbosely and into a file, so a failure explains itself
+        & build\tests\Release\tst_localbackend.exe -v2 -o localbackend.log,txt
+        "exit code of tst_localbackend: $LASTEXITCODE"
+        if (Test-Path localbackend.log) { Get-Content localbackend.log } else { "no log file was written" }
         ctest --test-dir build -C Release --output-on-failure
 
     - name: Package
