@@ -66,6 +66,15 @@ A panel below the results shows three figures next to the overall score:
 
 Nothing is made up when data is missing: a drive that does not report a wear level (hard disks, many USB enclosures, virtual disks) shows no percentage, and the panel says why. The drive health and filesystem figures are also part of saved reports.
 
+## Themes
+**Theme** in the menu selects how the result bars and controls look. **Neon Dark** is a dark theme with gradient bars (blue-teal for reads, purple-pink for writes, orange for mixed results); the other entries keep the previous looks.
+
+<p align="center">
+   <img src="assets/images/theme-neon.png" width="460"/>
+</p>
+
+*Rendered with sample results, not a real benchmark.*
+
 ## Dependencies
 ### Required
 * GCC/Clang C++17 (or later)
