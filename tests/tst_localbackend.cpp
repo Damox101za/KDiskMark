@@ -45,21 +45,38 @@ private slots:
         QVERIFY(finished.takeFirst().at(0).toBool());
         QCOMPARE(benchmarkFiles(dir.path()).size(), 1);
 
-        // Buffered I/O: a temporary directory may be on tmpfs, which has no O_DIRECT
-        QVERIFY(backend.startBenchmarkTest(1, 16, 70, false, false, false, 4, 1, 1, "randread")
-                .value("success").toBool());
-        QVERIFY(finished.wait(20000));
+        // Buffered I/O: a temporary directory may be on tmpfs, which has no O_DIRECT.
+        // A just written file can be briefly locked on Windows (virus scanner), so the run is
+        // retried and every attempt is recorded, to tell a transient lock from a real error.
+        QStringList attempts;
+        double bandwidth = 0;
 
-        const QList<QVariant> result = finished.takeFirst();
-        QVERIFY(result.at(0).toBool());
+        for (int attempt = 1; attempt <= 3 && bandwidth <= 0; attempt++) {
+            finished.clear();
+            QVERIFY(backend.startBenchmarkTest(1, 16, 70, false, false, false, 4, 1, 1, "randread")
+                    .value("success").toBool());
+            QVERIFY(finished.wait(20000));
 
-        const QString output = result.at(1).toString();
-        const QJsonDocument json = QJsonDocument::fromJson(Backend::jsonFromOutput(output));
-        QVERIFY2(json.isObject(), qPrintable("fio printed: " + output.left(400) + " / stderr: " + result.at(2).toString().left(200)));
-        const QJsonObject job = json.object().value("jobs").toArray().first().toObject();
-        QVERIFY2(job.value("read").toObject().value("bw_bytes").toDouble() > 0,
-                 qPrintable("job: " + QString::fromUtf8(QJsonDocument(job).toJson(QJsonDocument::Compact)).left(1800)
-                            + " / stderr: " + result.at(2).toString().left(400)));
+            const QList<QVariant> result = finished.takeFirst();
+            QVERIFY(result.at(0).toBool());
+
+            const QString output = result.at(1).toString();
+            const QJsonDocument json = QJsonDocument::fromJson(Backend::jsonFromOutput(output));
+            QVERIFY2(json.isObject(), qPrintable("fio printed: " + output.left(400) + " / stderr: " + result.at(2).toString().left(200)));
+
+            const QJsonObject job = json.object().value("jobs").toArray().first().toObject();
+            bandwidth = job.value("read").toObject().value("bw_bytes").toDouble();
+
+            attempts << QStringLiteral("attempt %1: error=%2 bw_bytes=%3 stderr='%4' size=%5")
+                        .arg(attempt).arg(job.value("error").toInt()).arg(bandwidth)
+                        .arg(result.at(2).toString().left(160))
+                        .arg(QDir(dir.path()).entryInfoList({"kdiskmark-*.tmp"}, QDir::Files).value(0).size());
+
+            if (bandwidth <= 0) QTest::qWait(500);
+        }
+
+        QVERIFY2(bandwidth > 0, qPrintable(QStringLiteral("dir=%1 | ").arg(dir.path()) + attempts.join(" | ")));
+        if (attempts.size() > 1) qWarning("needed %d attempts: %s", int(attempts.size()), qPrintable(attempts.join(" | ")));
 
         QVERIFY(backend.removeBenchmarkFile().value("success").toBool());
         QCOMPARE(benchmarkFiles(dir.path()).size(), 0);
