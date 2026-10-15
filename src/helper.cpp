@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QtDBus>
 #include <QFile>
+#include <QSocketNotifier>
 #include <QFileInfo>
 #include <QDir>
 #include <PolkitQt1/Authority>
@@ -11,6 +12,7 @@
 #include <signal.h>
 
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
 #include <linux/fs.h>
@@ -75,6 +77,20 @@ namespace
         }
 
         return validateFileSize(fileSize);
+    }
+}
+
+namespace
+{
+    // Written by the signal handler, read by a QSocketNotifier in the event loop. Only
+    // write() is called from the handler, which is async-signal-safe.
+    int signalSocket[2] = { -1, -1 };
+
+    void unixSignalHandler(int signalNumber)
+    {
+        const char byte = static_cast<char>(signalNumber);
+        const ssize_t written = ::write(signalSocket[0], &byte, 1);
+        (void)written;
     }
 }
 
@@ -416,17 +432,63 @@ QVariantMap Helper::stopCurrentTask()
         return {};
     }
 
-    if (m_process->state() != QProcess::NotRunning) {
-        m_process->terminate();
-
-        // fio normally exits on SIGTERM; do not let a stuck process block the helper forever.
-        if (!m_process->waitForFinished(5000)) {
-            m_process->kill();
-            m_process->waitForFinished(2000);
-        }
-    }
+    stopProcess();
 
     return {{"success", true}};
+}
+
+void Helper::stopProcess()
+{
+    if (m_process->state() == QProcess::NotRunning) {
+        return;
+    }
+
+    m_process->terminate();
+
+    // fio normally exits on SIGTERM; do not let a stuck process block the helper forever.
+    if (!m_process->waitForFinished(5000)) {
+        m_process->kill();
+        m_process->waitForFinished(2000);
+    }
+}
+
+// Everything the helper created or started is cleaned up here, so a termination request
+// (systemd stopping the unit, kill, Ctrl+C) leaves neither a running fio nor the benchmark file.
+void Helper::shutdown()
+{
+    stopProcess();
+
+    if (!m_benchmarkFile.fileName().isNull()) {
+        m_benchmarkFile.close();
+        m_benchmarkFile.remove();
+    }
+
+    qApp->quit();
+}
+
+void Helper::installSignalHandlers()
+{
+    if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, signalSocket) != 0) {
+        qWarning("Cannot create the signal socket, termination signals will not clean up.");
+        return;
+    }
+
+    m_signalNotifier = new QSocketNotifier(signalSocket[1], QSocketNotifier::Read, this);
+    connect(m_signalNotifier, &QSocketNotifier::activated, this, [this]() {
+        char byte;
+        const ssize_t received = ::read(signalSocket[1], &byte, 1);
+        (void)received;
+        shutdown();
+    });
+
+    struct sigaction action;
+    sigemptyset(&action.sa_mask);
+    action.sa_handler = unixSignalHandler;
+    action.sa_flags = SA_RESTART;
+
+    for (int signalNumber : { SIGTERM, SIGINT, SIGHUP }) {
+        sigaction(signalNumber, &action, nullptr);
+    }
 }
 
 QVariantMap Helper::checkCowStatus(const QString &path)
@@ -533,5 +595,6 @@ int main(int argc, char *argv[])
 {
     QCoreApplication a(argc, argv);
     Helper helper;
+    helper.installSignalHandlers();
     a.exec();
 }
