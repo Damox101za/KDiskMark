@@ -2,13 +2,16 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QRandomGenerator>
 
 LocalBackend::LocalBackend(QObject *parent) : Backend(parent), m_process(new QProcess(this))
 {
     connect(m_process, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
-            this, [this](int, QProcess::ExitStatus exitStatus) {
-        emit taskFinished(exitStatus == QProcess::NormalExit,
+            this, [this](int exitCode, QProcess::ExitStatus exitStatus) {
+        // fio reports its own errors in the JSON and through a non-zero exit code
+        emit taskFinished(exitStatus == QProcess::NormalExit && exitCode == 0,
                           QString::fromUtf8(m_process->readAllStandardOutput()),
                           QString::fromUtf8(m_process->readAllStandardError()));
     });
@@ -21,6 +24,15 @@ LocalBackend::LocalBackend(QObject *parent) : Backend(parent), m_process(new QPr
                               .arg(Backend::fioProgram()));
         }
     });
+}
+
+LocalBackend::~LocalBackend()
+{
+    stopProcess();
+
+    if (!m_benchmarkPath.isEmpty()) {
+        QFile::remove(m_benchmarkPath);
+    }
 }
 
 QVariantMap LocalBackend::initSession()
@@ -48,7 +60,7 @@ QVariantMap LocalBackend::createNoCowDirectory(const QString &)
 
 QString LocalBackend::fioFilename() const
 {
-    QString name = QDir::toNativeSeparators(m_benchmarkFile.fileName());
+    QString name = QDir::toNativeSeparators(m_benchmarkPath);
 
 #ifdef Q_OS_WIN
     // fio treats ':' as a separator in file names; the one of a drive letter must be escaped.
@@ -84,7 +96,7 @@ QVariantMap LocalBackend::prepareBenchmarkFile(const QString &path, int fileSize
         return {{"success", false}, {"error", tr("Another task is still running.")}};
     }
 
-    if (!m_benchmarkFile.fileName().isNull()) {
+    if (!m_benchmarkPath.isEmpty()) {
         return {{"success", false}, {"error", tr("A new benchmark session should be started.")}};
     }
 
@@ -93,15 +105,32 @@ QVariantMap LocalBackend::prepareBenchmarkFile(const QString &path, int fileSize
         return {{"success", false}, {"error", tr("The path is not an existing directory.")}};
     }
 
-    m_benchmarkFile.setFileTemplate(QDir(path).absoluteFilePath(QStringLiteral("kdiskmark-XXXXXX.tmp")));
+    // Reserve a unique name by creating the file exclusively, then close it for real.
+    static const QString characters = QStringLiteral("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+    QString errorString;
 
-    if (!m_benchmarkFile.open()) {
-        return {{"success", false}, {"error", tr("An error occurred while creating the benchmark file: %1")
-                                              .arg(m_benchmarkFile.errorString())}};
+    for (int attempt = 0; attempt < 100 && m_benchmarkPath.isEmpty(); attempt++) {
+        QString suffix;
+        for (int i = 0; i < 6; i++) {
+            suffix += characters.at(static_cast<int>(QRandomGenerator::global()->bounded(characters.size())));
+        }
+
+        const QString candidate = QDir(path).absoluteFilePath(QStringLiteral("kdiskmark-%1.tmp").arg(suffix));
+
+        QFile file(candidate);
+        if (file.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+            file.close();
+            m_benchmarkPath = candidate;
+        }
+        else {
+            errorString = file.errorString();
+        }
     }
 
-    // fio opens the file itself; on Windows an open handle of ours would get in its way.
-    m_benchmarkFile.close();
+    if (m_benchmarkPath.isEmpty()) {
+        return {{"success", false}, {"error", tr("An error occurred while creating the benchmark file: %1")
+                                              .arg(errorString)}};
+    }
 
     startFio(QStringList()
              << QStringLiteral("--output-format=json")
@@ -119,7 +148,7 @@ QVariantMap LocalBackend::startBenchmarkTest(int measuringTime, int fileSize, in
                                              bool fillZeros, bool cacheBypass, bool continuousGeneration,
                                              int blockSize, int queueDepth, int threads, const QString &rw)
 {
-    if (m_benchmarkFile.fileName().isNull() || !QFile::exists(m_benchmarkFile.fileName())) {
+    if (m_benchmarkPath.isEmpty() || !QFile::exists(m_benchmarkPath)) {
         return {{"success", false}, {"error", tr("The benchmark file was not pre-created.")}};
     }
 
@@ -165,12 +194,17 @@ QVariantMap LocalBackend::flushPageCache()
 
 QVariantMap LocalBackend::removeBenchmarkFile()
 {
-    if (m_benchmarkFile.fileName().isNull() || !QFile::exists(m_benchmarkFile.fileName())) {
+    if (m_benchmarkPath.isEmpty() || !QFile::exists(m_benchmarkPath)) {
+        m_benchmarkPath.clear();
         return {{"success", false}, {"error", tr("Cannot remove the benchmark file, because it doesn't exist.")}};
     }
 
-    m_benchmarkFile.close();
-    return {{"success", m_benchmarkFile.remove()}};
+    const bool removed = QFile::remove(m_benchmarkPath);
+    if (removed) {
+        m_benchmarkPath.clear();
+    }
+
+    return {{"success", removed}};
 }
 
 void LocalBackend::stopProcess()

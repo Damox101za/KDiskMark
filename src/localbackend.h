@@ -4,7 +4,6 @@
 #include "backend.h"
 
 #include <QProcess>
-#include <QTemporaryFile>
 
 // Runs fio directly, as the user who started the application. There is no privileged helper:
 // benchmarking a file in a folder the user can write to does not need one.
@@ -17,6 +16,7 @@ class LocalBackend : public Backend
 
 public:
     explicit LocalBackend(QObject *parent = nullptr);
+    ~LocalBackend() override;
 
     QVariantMap initSession() override;
     QVariantMap endSession() override;
@@ -38,7 +38,10 @@ private:
     QStringList platformOptions() const;
 
     QProcess *m_process;
-    QTemporaryFile m_benchmarkFile;
+
+    // Not a QTemporaryFile: its close() keeps the OS handle open, and on Windows an open handle
+    // stops fio from deleting and re-creating the file.
+    QString m_benchmarkPath;
 };
 
 #endif // LOCALBACKEND_H
