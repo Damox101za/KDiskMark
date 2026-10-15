@@ -35,6 +35,7 @@ private:
     bool startFio(const QStringList &arguments);
     void stopProcess();
     QString fioFilename() const;
+    QStringList platformOptions() const;
 
     QProcess *m_process;
     QTemporaryFile m_benchmarkFile;

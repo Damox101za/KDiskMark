@@ -58,6 +58,16 @@ QString LocalBackend::fioFilename() const
     return name;
 }
 
+QStringList LocalBackend::platformOptions() const
+{
+#ifdef Q_OS_WIN
+    // Jobs are threads on Windows; without this fio prints a notice about it before the results
+    return { QStringLiteral("--thread") };
+#else
+    return {};
+#endif
+}
+
 bool LocalBackend::startFio(const QStringList &arguments)
 {
     if (m_process->state() != QProcess::NotRunning) {
@@ -95,6 +105,7 @@ QVariantMap LocalBackend::prepareBenchmarkFile(const QString &path, int fileSize
 
     startFio(QStringList()
              << QStringLiteral("--output-format=json")
+             << platformOptions()
              << QStringLiteral("--create_only=1")
              << QStringLiteral("--filename=%1").arg(fioFilename())
              << QStringLiteral("--size=%1m").arg(fileSize)
@@ -120,6 +131,7 @@ QVariantMap LocalBackend::startBenchmarkTest(int measuringTime, int fileSize, in
 
     const bool started = startFio(QStringList()
              << QStringLiteral("--output-format=json")
+             << platformOptions()
              << QStringLiteral("--ioengine=%1").arg(ioEngine)
              << QStringLiteral("--randrepeat=0")
              << QStringLiteral("--refill_buffers=%1").arg(continuousGeneration)

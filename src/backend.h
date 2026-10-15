@@ -1,6 +1,7 @@
 #ifndef BACKEND_H
 #define BACKEND_H
 
+#include <QByteArray>
 #include <QObject>
 #include <QString>
 #include <QVariantMap>
@@ -28,6 +29,10 @@ public:
 
     // The fio executable: next to the application on Windows when bundled, otherwise "fio" from PATH.
     static QString fioProgram();
+
+    // fio can print notices (for example about threads on Windows) before the JSON document, even
+    // with --output-format=json. Returns the bytes from the first line that starts the document.
+    static QByteArray jsonFromOutput(const QString &output);
 
     virtual QVariantMap initSession() = 0;
     virtual QVariantMap endSession() = 0;

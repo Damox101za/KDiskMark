@@ -53,8 +53,9 @@ private slots:
         const QList<QVariant> result = finished.takeFirst();
         QVERIFY(result.at(0).toBool());
 
-        const QJsonDocument json = QJsonDocument::fromJson(result.at(1).toString().toUtf8());
-        QVERIFY(json.isObject());
+        const QString output = result.at(1).toString();
+        const QJsonDocument json = QJsonDocument::fromJson(Backend::jsonFromOutput(output));
+        QVERIFY2(json.isObject(), qPrintable("fio printed: " + output.left(400) + " / stderr: " + result.at(2).toString().left(200)));
         const QJsonObject job = json.object().value("jobs").toArray().first().toObject();
         QVERIFY(job.value("read").toObject().value("bw_bytes").toDouble() > 0);
 
@@ -110,6 +111,14 @@ private slots:
 
         QVERIFY(!reply.value("success").toBool());
         QVERIFY(!reply.value("error").toString().isEmpty());
+    }
+
+    void findsTheJsonAfterNotices()
+    {
+        const QString notice = QStringLiteral("fio: this platform does not support process shared mutexes\n");
+        QCOMPARE(Backend::jsonFromOutput(notice + "{\"jobs\": []}"), QByteArray("{\"jobs\": []}"));
+        QCOMPARE(Backend::jsonFromOutput("{\"jobs\": []}"), QByteArray("{\"jobs\": []}"));
+        QCOMPARE(Backend::jsonFromOutput("no json here"), QByteArray("no json here"));
     }
 
     void startingBeforePreparingIsAnError()

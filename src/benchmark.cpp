@@ -190,7 +190,7 @@ void Benchmark::fetchDriveHealth()
 
 Benchmark::ParsedJob Benchmark::parseResult(const QString &output, const QString &errorOutput)
 {
-    QJsonDocument jsonResponse = QJsonDocument::fromJson(output.toUtf8());
+    QJsonDocument jsonResponse = QJsonDocument::fromJson(Backend::jsonFromOutput(output));
     QJsonObject jsonObject = jsonResponse.object();
     QJsonArray jobs = jsonObject["jobs"].toArray();
 

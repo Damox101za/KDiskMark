@@ -18,3 +18,15 @@ QString Backend::fioProgram()
 
     return QStringLiteral("fio");
 }
+
+QByteArray Backend::jsonFromOutput(const QString &output)
+{
+    const QByteArray bytes = output.toUtf8();
+
+    if (bytes.startsWith('{')) {
+        return bytes;
+    }
+
+    const int start = bytes.indexOf("\n{");
+    return start >= 0 ? bytes.mid(start + 1) : bytes;
+}
