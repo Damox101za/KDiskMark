@@ -57,7 +57,9 @@ private slots:
         const QJsonDocument json = QJsonDocument::fromJson(Backend::jsonFromOutput(output));
         QVERIFY2(json.isObject(), qPrintable("fio printed: " + output.left(400) + " / stderr: " + result.at(2).toString().left(200)));
         const QJsonObject job = json.object().value("jobs").toArray().first().toObject();
-        QVERIFY(job.value("read").toObject().value("bw_bytes").toDouble() > 0);
+        QVERIFY2(job.value("read").toObject().value("bw_bytes").toDouble() > 0,
+                 qPrintable("job: " + QString::fromUtf8(QJsonDocument(job).toJson(QJsonDocument::Compact)).left(1800)
+                            + " / stderr: " + result.at(2).toString().left(400)));
 
         QVERIFY(backend.removeBenchmarkFile().value("success").toBool());
         QCOMPARE(benchmarkFiles(dir.path()).size(), 0);
