@@ -100,3 +100,17 @@ jobs:
       with:
         name: kdiskmark-windows
         path: dist
+
+    - name: Installer
+      shell: pwsh
+      run: |
+        $version = (Select-String -Path CMakeLists.txt -Pattern 'project\(kdiskmark VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+        $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
+        makensis "/DVERSION=$version" "/DSOURCE_DIR=$PWD\dist" "/DOUTFILE=$PWD\KDiskMark-$version-Setup.exe" packaging\windows\installer.nsi
+        Get-Item "KDiskMark-$version-Setup.exe" | Select-Object Name, Length
+
+    - name: Upload the installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: kdiskmark-windows-installer
+        path: KDiskMark-*-Setup.exe

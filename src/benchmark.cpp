@@ -2,6 +2,7 @@
 
 #include "global.h"
 
+#include <QDir>
 #include <QEventLoop>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -387,10 +388,26 @@ void Benchmark::prepareFile(const QString &benchmarkFile, int fileSize)
     bool success = false;
     QString output, errorOutput;
 
+    // Writing the file can take a minute on a slow drive (it has to be real data, otherwise
+    // reads would be answered with zeros), so show how far it is.
+    QTimer progress;
+    progress.setInterval(500);
+    connect(&progress, &QTimer::timeout, this, [&]() {
+        const QFileInfoList files = QDir(benchmarkFile).entryInfoList({ QStringLiteral("kdiskmark-*.tmp") },
+                                                                      QDir::Files, QDir::Time);
+        if (!files.isEmpty()) {
+            emit benchmarkStatusUpdate(tr("Preparing: writing the test file (%1 of %2 MiB)")
+                                       .arg(files.first().size() / (1024 * 1024)).arg(fileSize));
+        }
+    });
+    progress.start();
+
     const bool started = runTask([&]() {
         return m_backend->prepareBenchmarkFile(benchmarkFile, fileSize,
                                                AppSettings().getBenchmarkTestData() == Global::BenchmarkTestData::Zeros);
     }, &success, &output, &errorOutput);
+
+    progress.stop();
 
     if (!started || !isRunning()) return;
 

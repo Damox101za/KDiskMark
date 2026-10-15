@@ -5,6 +5,10 @@ project(kdiskmark VERSION 3.3.0 LANGUAGES CXX)
 set(CMAKE_PROJECT_HOMEPAGE_URL "https://github.com/JonMagon/KDiskMark")
 set(CMAKE_PROJECT_DESCRIPTION "A simple open source disk benchmark tool for Linux distros")
 
+if(WIN32)
+    enable_language(RC)
+endif()
+
 set(APPLICATION_NAME "KDiskMark")
 set(DESKTOP_FILE kdiskmark.desktop)
 
@@ -164,7 +168,15 @@ add_executable(${PROJECT_NAME}
     src/drivehealth.cpp
     src/healthgauge.h
     src/healthgauge.cpp
+    src/resources.qrc
 )
+
+if(WIN32)
+    # The icon shown for kdiskmark.exe in the file manager
+    target_sources(${PROJECT_NAME} PRIVATE src/kdiskmark.rc)
+    # A windowed program, not a console one
+    set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE ON)
+endif()
 
 # The terminal interface and the helper client are Linux only
 if(NOT WIN32)
@@ -201,7 +213,9 @@ if(WIN32)
     install(FILES LICENSE DESTINATION . RENAME LICENSE.txt)
     # CI fetches the official fio build into third-party/fio before packaging
     if(EXISTS "${CMAKE_SOURCE_DIR}/third-party/fio/fio.exe")
-        install(DIRECTORY third-party/fio DESTINATION .)
+        # only the program and its licence texts, not fio's own test programs
+        file(GLOB FIO_TEXTS "${CMAKE_SOURCE_DIR}/third-party/fio/*.txt")
+        install(FILES third-party/fio/fio.exe ${FIO_TEXTS} DESTINATION fio)
     endif()
 else()
     install(TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR})

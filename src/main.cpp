@@ -42,7 +42,7 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationVersion(QStringLiteral("%1.%2.%3").arg(PROJECT_VERSION_MAJOR)
                                             .arg(PROJECT_VERSION_MINOR).arg(PROJECT_VERSION_PATCH));
     QCoreApplication::setOrganizationName(QStringLiteral(PROJECT_NAME));
-    QGuiApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral(PROJECT_NAME)));
+    QGuiApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral(PROJECT_NAME), QIcon(QStringLiteral(":/kdiskmark.png"))));
 
 #ifndef Q_OS_WIN
     const bool noDisplay = qEnvironmentVariableIsEmpty("DISPLAY")
